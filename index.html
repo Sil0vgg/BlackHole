@@ -404,7 +404,7 @@
         });
         envFolder.add(params, 'diskDensity', 0.0, 3.0).name('Disk Density').listen();
         envFolder.add(params, 'diskViscosity', 0.1, 2.0).name('Disk Viscosity');
-        envFolder.add(params, 'starCount', 1.0, 5000.0, 10.0).name('Star Density');
+        envFolder.add(params, 'starCount', 0, 5000.0, 10.0).name('Star Density');
 
         // Persistence Button
         gui.add({ save: saveConfig }, 'save').name('💾 Save Configuration');
