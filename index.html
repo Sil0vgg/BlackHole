@@ -1,944 +1,1801 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Relativistic Spacetime Engine & 1080p Cinematic Suite</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
-        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
-        
-        /* Cinematic Letterbox Bars */
-        .letterbox {
-            position: fixed; left: 0; width: 100%; height: 0%; background: #000; z-index: 3;
-            transition: height 0.8s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: none;
-        }
-        #letterbox-top { top: 0; }
-        #letterbox-bottom { bottom: 0; }
-        body.cinematic .letterbox { height: 12%; }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Singularity — Relativistic Black Hole Engine</title>
 
-        /* Film Grain Overlay */
-        #film-grain {
-            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 3;
-            opacity: 0.0; transition: opacity 0.8s ease; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.4'/%3E%3C/svg%3E");
-        }
-        body.cinematic #film-grain { opacity: 0.38; }
+<!--
+  ============================================================================
+  SINGULARITY — A modular, GPU-raymarched black hole visualization engine.
+  ============================================================================
+  Architecture overview (see inline module comments further down):
+    - StateStore        : single source of truth for every tunable parameter
+    - ShaderLibrary      : GLSL source for the raymarch pass + post FX passes
+    - RenderPipeline     : manages render targets and the multi-pass compositor
+                           (raymarch -> bright-pass -> dual gaussian blur -> composite)
+    - OrbitCameraRig     : manual pointer-driven orbit camera (no external addons)
+    - CinematicDirector  : scripted camera paths for "Cinematic Mode"
+    - AudioEngine        : Web Audio analyser used for music-reactive parameters
+    - RecordingStudio    : MediaRecorder-based 1080p60 capture
+    - ControlDeck        : schema-driven, dependency-free control panel UI
+    - Application        : wires everything together and owns the frame loop
 
-        /* Prominent Floating Stop Recording Banner */
-        #stop-recording-banner {
-            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-            background: rgba(220, 50, 50, 0.95); color: white; padding: 12px 24px;
-            z-index: 9999; border-radius: 6px; font-weight: bold; font-size: 14px;
-            letter-spacing: 1px; cursor: pointer; box-shadow: 0 4px 20px rgba(220,50,50,0.5);
-            display: none; transition: background 0.2s;
-        }
-        #stop-recording-banner:hover { background: rgba(250, 40, 40, 1); }
+  Design goal: every knob a user can see in the Control Deck maps 1:1 to a
+  uniform consumed by the raymarch/composite shaders — nothing is decorative.
+  ============================================================================
+-->
 
-        /* Control Panel Overlay */
-        #ui-panel {
-            position: absolute; top: 0; left: 0; width: 420px; height: 100vh;
-            background: rgba(12, 12, 14, 0.94); backdrop-filter: blur(14px);
-            color: #d4d4d4; z-index: 5; overflow-y: auto;
-            border-right: 1px solid rgba(255,255,255,0.1);
-            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-            box-sizing: border-box; padding: 30px 25px 60px 25px;
-        }
-        #ui-panel.collapsed { transform: translateX(-100%); }
-        
-        #toggle-btn {
-            position: absolute; top: 15px; left: 440px; z-index: 6;
-            background: rgba(20, 20, 25, 0.9); color: #fff; border: 1px solid #555;
-            padding: 8px 16px; cursor: pointer; border-radius: 4px; backdrop-filter: blur(5px);
-            transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-            font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;
-        }
-        #toggle-btn.collapsed { left: 15px; }
-        
-        h1 { font-size: 20px; margin-top: 0; color: #fff; border-bottom: 1px solid #333; padding-bottom: 10px; }
-        h2 { font-size: 15px; color: #61afef; margin-top: 22px; border-left: 3px solid #61afef; padding-left: 8px; }
-        p { font-size: 13px; line-height: 1.6; color: #abb2bf; }
-        .math { font-family: 'Fira Code', monospace; background: rgba(0,0,0,0.4); padding: 4px 6px; border-radius: 4px; color: #e5c07b; border: 1px solid #333; display: block; margin: 10px 0; overflow-x: auto; font-size: 12px; }
-        .control-hint { display: inline-block; background: #282c34; padding: 6px 10px; border-radius: 4px; font-size: 12px; margin-top: 10px; color: #98c379; border: 1px solid #3e4451; }
-        
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #666; }
-    </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-    <!-- Three.js Core & Addons -->
-    <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    
-    <!-- Post-Processing -->
-    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
-    
-    <!-- lil-gui -->
-    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.18"></script>
+<style>
+  :root {
+    /* ---- Design tokens ---------------------------------------------- */
+    --bg-void:        #05060a;
+    --panel-bg:       #0b0d13;
+    --panel-bg-2:     #0e1119;
+    --panel-border:   #1c212c;
+    --hairline:       rgba(255,255,255,0.06);
+    --text-primary:   #e7eaf2;
+    --text-secondary: #7c869c;
+    --text-dim:       #4a5266;
+    --accent-cyan:    #5eead4;
+    --accent-cyan-dim:#2b8f81;
+    --accent-amber:   #f5a65b;
+    --accent-danger:  #ef5350;
+    --track-bg:       #171a22;
+
+    --font-display: 'Space Mono', 'SFMono-Regular', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    --font-body:    -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+
+    --panel-w: 360px;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg-void);
+    font-family: var(--font-body);
+    color: var(--text-primary);
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  #canvas-container {
+    position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 1;
+  }
+  #canvas-container canvas { display: block; width: 100%; height: 100%; }
+
+  /* ---- Instrument bezel: the page's signature element ----------------
+     A quiet observatory-viewfinder frame: four corner brackets + a soft
+     radial vignette, styled like the readout bezel of an optical
+     instrument. It ties the HUD, panel, and viewport into one object. */
+  #bezel { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+  .bracket {
+    position: absolute; width: 26px; height: 26px;
+    border-color: rgba(94,234,212,0.35);
+    border-style: solid; border-width: 0;
+    transition: border-color 0.6s ease;
+  }
+  .bracket.tl { top: 14px; left: 14px; border-top-width: 1.5px; border-left-width: 1.5px; }
+  .bracket.tr { top: 14px; right: 14px; border-top-width: 1.5px; border-right-width: 1.5px; }
+  .bracket.bl { bottom: 14px; left: 14px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+  .bracket.br { bottom: 14px; right: 14px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+  body.cinematic .bracket { border-color: rgba(245,166,91,0.55); }
+
+  /* Cinematic letterbox */
+  .letterbox {
+    position: fixed; left: 0; width: 100%; height: 0%; background: #000; z-index: 6;
+    transition: height 0.9s cubic-bezier(0.16,1,0.3,1); pointer-events: none;
+  }
+  #letterbox-top { top: 0; } #letterbox-bottom { bottom: 0; }
+  body.cinematic .letterbox { height: 11%; }
+
+  /* Film grain overlay (CSS-driven, cheap vs. a shader pass) */
+  #film-grain {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0;
+    transition: opacity 0.8s ease; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---- HUD readout (top-right, oscilloscope-style) ------------------ */
+  #hud {
+    position: fixed; top: 16px; right: 16px; z-index: 6;
+    font-family: var(--font-display); font-size: 11px; letter-spacing: 0.03em;
+    background: rgba(11,13,19,0.72); border: 1px solid var(--panel-border);
+    border-radius: var(--radius); padding: 10px 14px; backdrop-filter: blur(6px);
+    color: var(--accent-cyan); pointer-events: none; min-width: 190px;
+  }
+  #hud .row { display: flex; justify-content: space-between; gap: 18px; padding: 2px 0; color: var(--text-secondary); }
+  #hud .row span:last-child { color: var(--accent-cyan); }
+  #hud .title { color: var(--text-dim); font-size: 9px; text-transform: uppercase; letter-spacing: 0.14em; margin-bottom: 6px; }
+
+  /* ---- Stop recording banner ---------------------------------------- */
+  #stop-recording-banner {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    background: rgba(239,83,80,0.95); color: #08090c; padding: 10px 22px;
+    z-index: 20; border-radius: var(--radius); font-family: var(--font-display);
+    font-weight: 700; font-size: 12px; letter-spacing: 0.08em; cursor: pointer;
+    box-shadow: 0 6px 24px rgba(239,83,80,0.35); display: none;
+    transition: background 0.15s ease, transform 0.15s ease;
+  }
+  #stop-recording-banner:hover { background: #ff6b66; transform: translateX(-50%) scale(1.02); }
+
+  /* ---- Toggle tab -------------------------------------------------- */
+  #toggle-btn {
+    position: fixed; top: 16px; left: 16px; z-index: 12;
+    background: rgba(11,13,19,0.85); color: var(--text-primary);
+    border: 1px solid var(--panel-border); border-radius: var(--radius);
+    padding: 9px 14px; cursor: pointer; font-family: var(--font-display);
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+    transition: left 0.4s cubic-bezier(0.16,1,0.3,1), border-color 0.2s ease;
+    backdrop-filter: blur(6px);
+  }
+  #toggle-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+  #toggle-btn.collapsed { left: 16px; }
+  #toggle-btn:not(.collapsed) { left: calc(var(--panel-w) + 16px); }
+
+  /* ---- Control Deck --------------------------------------------------
+     A schema-driven panel: see ControlDeck module. All markup below this
+     comment for individual controls is generated at runtime. */
+  #control-deck {
+    position: fixed; top: 0; left: 0; width: var(--panel-w); height: 100vh;
+    background: linear-gradient(180deg, var(--panel-bg) 0%, var(--panel-bg-2) 100%);
+    border-right: 1px solid var(--panel-border);
+    z-index: 10; overflow-y: auto; overflow-x: hidden;
+    transition: transform 0.4s cubic-bezier(0.16,1,0.3,1);
+    padding: 22px 0 80px 0;
+  }
+  #control-deck.collapsed { transform: translateX(-100%); }
+  #control-deck::-webkit-scrollbar { width: 6px; }
+  #control-deck::-webkit-scrollbar-thumb { background: #262b38; border-radius: 3px; }
+  #control-deck::-webkit-scrollbar-track { background: transparent; }
+
+  .deck-header { padding: 0 22px 16px 22px; border-bottom: 1px solid var(--hairline); margin-bottom: 4px; }
+  .deck-header h1 {
+    font-family: var(--font-display); font-size: 15px; margin: 0 0 4px 0;
+    color: var(--text-primary); letter-spacing: 0.02em;
+  }
+  .deck-header p {
+    font-size: 11px; color: var(--text-dim); margin: 0; line-height: 1.5;
+  }
+
+  .deck-section { border-bottom: 1px solid var(--hairline); }
+  .deck-section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 22px; cursor: pointer; user-select: none;
+  }
+  .deck-section-header:hover .deck-eyebrow { color: var(--accent-cyan); }
+  .deck-eyebrow {
+    font-family: var(--font-display); font-size: 10.5px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--text-secondary); transition: color 0.15s ease;
+  }
+  .deck-eyebrow::before { content: attr(data-index) ' / '; color: var(--text-dim); }
+  .chevron { color: var(--text-dim); font-size: 10px; transition: transform 0.25s ease; }
+  .deck-section.open .chevron { transform: rotate(90deg); color: var(--accent-cyan); }
+  .deck-body {
+    max-height: 0; overflow: hidden; transition: max-height 0.3s ease;
+    padding: 0 22px;
+  }
+  .deck-section.open .deck-body { max-height: 900px; padding-bottom: 16px; }
+
+  .control-row { margin: 12px 0; }
+  .control-label {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 11.5px; color: var(--text-secondary); margin-bottom: 6px;
+  }
+  .control-label .val {
+    font-family: var(--font-display); font-size: 10.5px; color: var(--accent-cyan);
+  }
+
+  /* Slider */
+  input[type="range"] {
+    -webkit-appearance: none; width: 100%; height: 3px; border-radius: 2px;
+    background: var(--track-bg); outline: none; margin: 0; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent-cyan); border: 2px solid #08090c; cursor: pointer;
+    box-shadow: 0 0 8px rgba(94,234,212,0.5);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 12px; height: 12px; border-radius: 50%; background: var(--accent-cyan);
+    border: 2px solid #08090c; cursor: pointer;
+  }
+
+  /* Select */
+  select.control-select {
+    width: 100%; background: var(--track-bg); color: var(--text-primary);
+    border: 1px solid var(--panel-border); border-radius: var(--radius);
+    padding: 7px 10px; font-family: var(--font-body); font-size: 12px;
+    cursor: pointer; outline: none;
+  }
+  select.control-select:focus { border-color: var(--accent-cyan); }
+
+  /* Toggle switch */
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 12px 0;
+  }
+  .toggle-row .control-label { margin-bottom: 0; }
+  .switch { position: relative; width: 36px; height: 20px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch .track {
+    position: absolute; inset: 0; background: var(--track-bg); border-radius: 20px;
+    border: 1px solid var(--panel-border); transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  .switch .knob {
+    position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--text-dim); transition: transform 0.2s ease, background 0.2s ease;
+  }
+  .switch input:checked + .track { border-color: var(--accent-cyan-dim); background: rgba(94,234,212,0.12); }
+  .switch input:checked + .track .knob { transform: translateX(16px); background: var(--accent-cyan); }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 8px; margin: 14px 0 4px 0; }
+  .btn {
+    flex: 1; padding: 9px 10px; text-align: center; border-radius: var(--radius);
+    border: 1px solid var(--panel-border); background: var(--track-bg);
+    color: var(--text-primary); font-family: var(--font-display); font-size: 10.5px;
+    letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  }
+  .btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+  .btn.primary { background: rgba(94,234,212,0.1); border-color: var(--accent-cyan-dim); color: var(--accent-cyan); }
+  .btn.danger { background: rgba(239,83,80,0.1); border-color: rgba(239,83,80,0.5); color: var(--accent-danger); }
+  .btn.record.recording { background: rgba(239,83,80,0.18); border-color: var(--accent-danger); color: var(--accent-danger); animation: pulse-rec 1.4s ease-in-out infinite; }
+  @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+  .swatch-row { display: flex; gap: 6px; margin: 10px 0; }
+  .swatch {
+    flex: 1; height: 26px; border-radius: var(--radius); cursor: pointer;
+    border: 1px solid var(--panel-border); position: relative; opacity: 0.75;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .swatch:hover { opacity: 1; transform: translateY(-1px); }
+  .swatch.active { opacity: 1; outline: 1.5px solid var(--accent-cyan); outline-offset: 2px; }
+
+  .hint {
+    font-size: 10.5px; color: var(--text-dim); line-height: 1.5; margin: 8px 0 0 0;
+  }
+</style>
 </head>
 <body>
 
-    <div id="film-grain"></div>
-    <div id="letterbox-top" class="letterbox"></div>
-    <div id="letterbox-bottom" class="letterbox"></div>
-    <div id="stop-recording-banner" onclick="stopRecordingViaBanner()">🔴 STOP 1080P RECORDING & DOWNLOAD VIDEO</div>
+  <div id="canvas-container"></div>
+  <div id="bezel">
+    <div class="bracket tl"></div><div class="bracket tr"></div>
+    <div class="bracket bl"></div><div class="bracket br"></div>
+  </div>
+  <div id="film-grain"></div>
+  <div id="letterbox-top" class="letterbox"></div>
+  <div id="letterbox-bottom" class="letterbox"></div>
 
-    <button id="toggle-btn" onclick="toggleUI()">Hide UI</button>
+  <div id="stop-recording-banner">● STOP 1080p RECORDING &amp; DOWNLOAD</div>
 
-    <div id="ui-panel">
-        <h1>Full HD Cinematic Spacetime Engine</h1>
-        <span class="control-hint">Drag to Orbit | Scroll to Zoom | Use GUI Panel</span>
-        
-        <h2>1. Advanced Camera Profiles</h2>
-        <p>Features multiple cinematic pathways including a smooth front-profile orbit, organic handheld shake, and a slow-tracking dolly mode designed to highlight the Einstein ring.</p>
-        
-        <h2>2. Full HD 1080p Master Recording</h2>
-        <p>Record directly at 1920x1080 resolution and 60 FPS using an optimized 15 Mbps MediaRecorder stream for crystal-clear output.</p>
-    </div>
+  <button id="toggle-btn">Hide Deck</button>
 
-    <div id="canvas-container"></div>
+  <div id="hud">
+    <div class="title">Instrument Readout</div>
+    <div class="row"><span>FPS</span><span id="hud-fps">--</span></div>
+    <div class="row"><span>Metric</span><span id="hud-metric">--</span></div>
+    <div class="row"><span>Horizon r</span><span id="hud-horizon">--</span></div>
+    <div class="row"><span>Spin (a)</span><span id="hud-spin">--</span></div>
+    <div class="row"><span>Render Scale</span><span id="hud-scale">--</span></div>
+    <div class="row"><span>Starfield</span><span id="hud-stars">--</span></div>
+  </div>
 
-    <audio id="audio-track" crossorigin="anonymous" loop preload="auto">
-        <source src="https://dn720308.ca.archive.org/0/items/interstellar-soundtrack/02%20Cornfield%20Chase.mp3" type="audio/mp3">
-    </audio>
+  <div id="control-deck"></div>
 
-    <script>
-        // --- UI Collapse Logic ---
-        let uiVisible = true;
-        function toggleUI() {
-            uiVisible = !uiVisible;
-            document.getElementById('ui-panel').classList.toggle('collapsed');
-            document.getElementById('toggle-btn').classList.toggle('collapsed');
-            document.getElementById('toggle-btn').innerText = uiVisible ? "Hide UI" : "Show UI";
+  <audio id="audio-track" crossorigin="anonymous" loop preload="none">
+    <source src="https://dn720308.ca.archive.org/0/items/interstellar-soundtrack/02%20Cornfield%20Chase.mp3" type="audio/mp3">
+  </audio>
+
+<script>
+'use strict';
+
+/* ============================================================================
+ * MODULE: StateStore
+ * ----------------------------------------------------------------------------
+ * The single source of truth for every tunable parameter in the simulation.
+ * Every field here is either bound to a Control Deck widget, a shader
+ * uniform, or both. Persisted to localStorage on demand (never automatically,
+ * to keep behaviour predictable).
+ *
+ * IMPORTANT: per the product brief, the engine boots at the LOWEST viable
+ * graphical/simulation fidelity. QUALITY_PRESETS.Low is applied at startup.
+ * ==========================================================================*/
+class StateStore {
+  static defaults() {
+    return {
+      // ---- Relativistic physics -----------------------------------------
+      bhType: 'Kerr',              // Schwarzschild | Kerr | Reissner-Nordstrom | Kerr-Newman
+      rs: 1.0,                     // Schwarzschild radius scale (mass proxy)
+      spin: 0.65,                  // Kerr spin parameter a (0..0.99)
+      charge: 0.0,                 // Reissner-Nordstrom charge Q (0..0.95)
+      lensingStrength: 1.0,        // multiplies the geodesic deflection term
+      isTesseract: false,          // experimental non-physical fold-space mode
+      showPhotonSphere: false,
+      hawkingRadiation: 0.0,
+      massClass: 'Intermediate-Mass',
+
+      // ---- Accretion disk --------------------------------------------
+      diskDensity: 1.1,
+      diskViscosity: 0.8,
+      diskParticleDensity: 0.7,
+      diskEdgeSoftness: 0.6,
+      diskInnerMult: 2.8,
+      diskOuterMult: 11.0,
+      diskTemperature: 7200,
+      colorPalette: 'Classic',     // Classic | Infrared | Ultraviolet | Monochrome | Exotic
+
+      // ---- Starfield ---------------------------------------------------
+      showStars: true,
+      starCount: 400,              // LOW default density
+      starBrightness: 0.8,
+      starTwinkle: true,
+
+      // ---- Render quality (defaults = lowest preset) --------------------
+      qualityPreset: 'Low',
+      resolutionScale: 0.55,
+      maxSteps: 90,
+      stepMultiplier: 0.055,
+      samples: 1,
+      textureFiltering: 0.6,
+      noiseReduction: 1.0,
+
+      // ---- Post-processing ------------------------------------------
+      bloomStrength: 0.45,
+      bloomRadius: 1.0,
+      bloomThreshold: 0.55,
+      chromaticAberration: 0.0015,
+      lensFlare: 0.25,
+      exposure: 1.0,
+      vignetteEffect: 0.55,
+      filmGrainAmount: 0.0,
+
+      // ---- Camera / cinematic -------------------------------------------
+      autoRotate: true,
+      autoRotateSpeed: 0.06,
+      cinematicMode: false,
+      cinematicCamMode: 'Front Orbit', // Front Orbit | Handheld Shake | Slow Dolly | Photon Skim
+      pathComplexity: 1.2,
+      transitionSpeed: 1.0,
+      focalDepth: 1.0,
+
+      // ---- Audio -----------------------------------------------------
+      masterVolume: 0.6,
+      musicReactivity: false,
+
+      // ---- Recording ---------------------------------------------------
+      recordCinematic: false,
+
+      // ---- Runtime read-only (not persisted) -----------------------------
+      fps: 0
+    };
+  }
+
+  constructor() {
+    this.STORAGE_KEY = 'singularity_engine_v1';
+    this.data = StateStore.defaults();
+    this.listeners = new Set();
+  }
+
+  /** Subscribe to any state mutation. Returns unsubscribe fn. */
+  onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+
+  set(key, value) {
+    this.data[key] = value;
+    for (const fn of this.listeners) fn(key, value, this.data);
+  }
+
+  get(key) { return this.data[key]; }
+
+  save() {
+    try {
+      const persistable = { ...this.data };
+      delete persistable.fps;
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(persistable));
+      return true;
+    } catch (e) { console.warn('[StateStore] save failed', e); return false; }
+  }
+
+  load() {
+    try {
+      const raw = localStorage.getItem(this.STORAGE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      this.data = { ...StateStore.defaults(), ...parsed };
+      for (const fn of this.listeners) fn('*', null, this.data);
+      return true;
+    } catch (e) { console.warn('[StateStore] load failed', e); return false; }
+  }
+
+  reset() {
+    this.data = StateStore.defaults();
+    for (const fn of this.listeners) fn('*', null, this.data);
+  }
+}
+
+/* ============================================================================
+ * MODULE: QualityPresets
+ * ----------------------------------------------------------------------------
+ * Bundles of render-cost parameters. "Low" is the boot default per spec;
+ * higher tiers trade frame time for ray-march precision and disk detail.
+ * ==========================================================================*/
+const QUALITY_PRESETS = {
+  Low:    { resolutionScale: 0.55, maxSteps: 90,  stepMultiplier: 0.055, samples: 1, bloomStrength: 0.45, noiseReduction: 1.0, diskParticleDensity: 0.7, textureFiltering: 0.6 },
+  Medium: { resolutionScale: 0.75, maxSteps: 200, stepMultiplier: 0.032, samples: 1, bloomStrength: 0.9,  noiseReduction: 0.6, diskParticleDensity: 1.1, textureFiltering: 1.0 },
+  High:   { resolutionScale: 1.0,  maxSteps: 340, stepMultiplier: 0.020, samples: 2, bloomStrength: 1.2,  noiseReduction: 0.35,diskParticleDensity: 1.5, textureFiltering: 1.3 },
+  Ultra:  { resolutionScale: 1.0,  maxSteps: 600, stepMultiplier: 0.012, samples: 2, bloomStrength: 1.5,  noiseReduction: 0.15,diskParticleDensity: 2.0, textureFiltering: 1.6 }
+};
+
+const MASS_CLASS_PRESETS = {
+  'Stellar-Mass':       { rs: 0.55, diskDensity: 1.9 },
+  'Intermediate-Mass':  { rs: 1.0,  diskDensity: 1.4 },
+  'Supermassive':       { rs: 1.55, diskDensity: 1.05 },
+  'Primordial':         { rs: 0.22, diskDensity: 2.6 }
+};
+
+const BH_TYPE_CODE = { 'Schwarzschild': 0, 'Kerr': 1, 'Reissner-Nordstrom': 2, 'Kerr-Newman': 3 };
+const PALETTE_CODE = { 'Classic': 0, 'Infrared': 1, 'Ultraviolet': 2, 'Monochrome': 3, 'Exotic': 4 };
+
+/* ============================================================================
+ * MODULE: ShaderLibrary
+ * ----------------------------------------------------------------------------
+ * All GLSL lives here. The raymarch pass integrates null geodesics through
+ * an effective-potential approximation of the chosen metric (Schwarzschild /
+ * Kerr / Reissner-Nordstrom / Kerr-Newman) using RK4, accumulating the
+ * accretion disk's emission (with relativistic Doppler beaming and
+ * gravitational redshift) and the background starfield along the way.
+ *
+ * The raymarch pass writes *linear, un-tonemapped* HDR color; all screen
+ * space post effects (bloom composite, exposure, vignette, grain, gamma)
+ * happen in the composite pass so each stage stays single-responsibility.
+ * ==========================================================================*/
+const ShaderLibrary = {
+
+  // Shared fullscreen-triangle vertex shader used by every pass.
+  vertex: /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = position.xy * 0.5 + 0.5;
+      gl_Position = vec4(position.xy, 0.0, 1.0);
+    }
+  `,
+
+  // ---- PASS 1: Relativistic raymarch ------------------------------------
+  raymarch: /* glsl */`
+    precision highp float;
+    varying vec2 vUv;
+
+    uniform vec2  u_resolution;
+    uniform vec3  u_cameraPos;
+    uniform vec3  u_cameraDir;
+    uniform vec3  u_cameraUp;
+    uniform vec3  u_cameraRight;
+    uniform float u_time;
+
+    // Physics
+    uniform float u_rs;
+    uniform float u_spin;
+    uniform float u_charge;
+    uniform int   u_bhType;
+    uniform bool  u_isTesseract;
+    uniform bool  u_showPhotonSphere;
+    uniform float u_hawkingRadiation;
+    uniform float u_lensingStrength;
+
+    // Disk
+    uniform float u_diskDensity;
+    uniform float u_diskViscosity;
+    uniform float u_diskParticleDensity;
+    uniform float u_diskEdgeSoftness;
+    uniform float u_diskInnerMult;
+    uniform float u_diskOuterMult;
+    uniform float u_diskTemperature;
+    uniform int   u_palette;
+
+    // Stars
+    uniform bool  u_showStars;
+    uniform float u_starCount;
+    uniform float u_starBrightness;
+    uniform bool  u_starTwinkle;
+
+    // Quality
+    uniform float u_textureFiltering;
+    uniform int   u_maxSteps;
+    uniform int   u_samples;
+    uniform float u_stepMultiplier;
+    uniform float u_noiseReduction;
+    uniform float u_audioIntensity;
+    uniform float u_chromaticAberration;
+    uniform bool  u_cameraEffects;
+
+    // ---- Noise primitives --------------------------------------------
+    vec2 hash2(vec2 p) {
+      p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+      return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p); vec2 f = fract(p);
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(
+        mix(dot(hash2(i + vec2(0.0,0.0)), f - vec2(0.0,0.0)),
+            dot(hash2(i + vec2(1.0,0.0)), f - vec2(1.0,0.0)), u.x),
+        mix(dot(hash2(i + vec2(0.0,1.0)), f - vec2(0.0,1.0)),
+            dot(hash2(i + vec2(1.0,1.0)), f - vec2(1.0,1.0)), u.x), u.y);
+    }
+    float fbm(vec2 p) {
+      float f = 0.0, amp = 0.5;
+      for (int i = 0; i < 4; i++) { f += amp * noise(p * u_textureFiltering); p *= 2.02; amp *= 0.5; }
+      return f;
+    }
+    float turbulence(vec2 p) {
+      // Higher-frequency layer used for disk "particle" grain.
+      return noise(p * 9.0 * max(u_diskParticleDensity, 0.05)) * 0.5
+           + noise(p * 19.0 * max(u_diskParticleDensity, 0.05)) * 0.25;
+    }
+    float starHash(vec3 p) {
+      p = fract(p * 0.3183099 + 0.1); p *= 17.0;
+      return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    }
+
+    // ---- Color science ---------------------------------------------------
+    vec3 ACES(vec3 x) {
+      float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+      return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+    }
+
+    // Physically-inspired blackbody approximation, then remapped per palette.
+    vec3 blackbody(float tempK) {
+      float t = clamp(tempK, 1000.0, 20000.0);
+      vec3 c;
+      c.r = 1.0;
+      c.g = clamp((t - 1200.0) / 4600.0, 0.0, 1.0);
+      c.b = clamp((t - 3400.0) / 6200.0, 0.0, 1.0);
+      if (t > 8200.0) {
+        float bs = clamp((t - 8200.0) / 5200.0, 0.0, 1.0);
+        c.r -= bs * 0.42; c.g -= bs * 0.18;
+      }
+      return max(c, 0.0);
+    }
+
+    vec3 applyPalette(vec3 baseColor, float tempFactor) {
+      if (u_palette == 1) { // Infrared
+        return mix(vec3(0.05,0.0,0.02), vec3(1.0,0.25,0.05), tempFactor) * (baseColor.r + baseColor.g + baseColor.b) * 0.4 + baseColor*0.15;
+      } else if (u_palette == 2) { // Ultraviolet
+        return mix(vec3(0.02,0.0,0.08), vec3(0.55,0.25,1.0), tempFactor) * (baseColor.r+baseColor.g+baseColor.b) * 0.4 + baseColor*0.1;
+      } else if (u_palette == 3) { // Monochrome
+        float l = dot(baseColor, vec3(0.299,0.587,0.114));
+        return vec3(l) * vec3(0.85, 0.9, 1.0);
+      } else if (u_palette == 4) { // Exotic (cyan/magenta plasma)
+        return mix(vec3(0.05,0.6,0.9), vec3(1.0,0.15,0.75), tempFactor) * (baseColor.r+baseColor.g+baseColor.b) * 0.42;
+      }
+      return baseColor; // Classic
+    }
+
+    // ---- Metric-dependent geometry ----------------------------------------
+    float eventHorizonRadius() {
+      float M = u_rs * 0.5;
+      if (u_isTesseract) return u_rs * 0.4;
+      if (u_bhType == 0) return u_rs;
+      if (u_bhType == 1) { float a = clamp(u_spin, 0.0, 0.999 * M); return M + sqrt(max(0.0, M*M - a*a)); }
+      if (u_bhType == 2) { float Q = clamp(u_charge, 0.0, M); return M + sqrt(max(0.0, M*M - Q*Q)); }
+      float a = clamp(u_spin, 0.0, 0.999 * M);
+      float Q = clamp(u_charge, 0.0, M);
+      return M + sqrt(max(0.0, M*M - a*a - Q*Q));
+    }
+
+    // Effective-potential acceleration approximating the null geodesic
+    // equation for each metric. This is a physically-motivated stylization
+    // (full tensor geodesics are not evaluated per-pixel for performance)
+    // tuned so spin drags frames (Lense-Thirring-like term) and charge
+    // repels near the horizon (Reissner-Nordstrom-like term).
+    vec3 geodesicAccel(vec3 p, float h2, vec3 v) {
+      float r2 = dot(p, p);
+      float r  = sqrt(r2);
+
+      if (u_isTesseract) {
+        return (-1.5 * u_rs * h2 * p / (r2 * r2 * r)) * (1.0 + 0.5 * sin(u_time + r)) * u_lensingStrength;
+      }
+
+      vec3 acc = -1.5 * u_rs * h2 * p / (r2 * r2 * r);
+
+      if (u_bhType == 2 || u_bhType == 3) {
+        float Q2 = u_charge * u_charge;
+        acc += (Q2 * u_rs / (r2 * r2 * r)) * p;
+      }
+      if (u_bhType == 1 || u_bhType == 3) {
+        vec3 rotAxis = vec3(0.0, 1.0, 0.0);
+        vec3 drag = cross(v, rotAxis) * (u_spin / (r2 * r));
+        acc += drag * 7.0;
+      }
+      return acc * u_lensingStrength;
+    }
+
+    // ---- Accretion disk shading -------------------------------------------
+    vec4 shadeDisk(vec3 pOld, vec3 p, vec3 vRay) {
+      float isco  = u_rs * u_diskInnerMult;
+      float outer = u_rs * u_diskOuterMult;
+
+      if (pOld.y * p.y > 0.0) return vec4(0.0); // did not cross the midplane this step
+
+      float tCross = pOld.y / (pOld.y - p.y);
+      vec3 hit = mix(pOld, p, tCross);
+      float r = length(hit.xz);
+      if (r < isco || r > outer) return vec4(0.0);
+
+      float angle = atan(hit.z, hit.x);
+      float swirl = angle + r * u_diskViscosity - u_time * 0.5;
+
+      float macro = fbm(vec2(r * 3.4, swirl));
+      float micro = turbulence(vec2(r * 2.0, swirl * 2.0));
+      float density = clamp(macro + micro * 0.35, 0.0, 1.0);
+
+      float soft = max(0.08, u_diskEdgeSoftness);
+      float innerMask = smoothstep(isco, isco + 0.18 + soft, r);
+      float outerMask = smoothstep(outer, outer - (0.5 * soft), r);
+      float alpha = innerMask * outerMask * (0.35 + 0.65 * density) * u_diskDensity;
+      if (alpha <= 0.0015) return vec4(0.0);
+
+      // Orbital plasma velocity (Keplerian-like) for Doppler beaming.
+      vec3 vPlasma = normalize(vec3(hit.z, 0.0, -hit.x));
+      float vOrb = sqrt(clamp((u_rs * 0.5) / max(r, 0.0001), 0.0, 0.98));
+      vPlasma *= vOrb;
+
+      float dopplerFactor = sqrt(max(0.0, 1.0 - vOrb * vOrb)) / (1.0 + dot(vRay, vPlasma));
+      float gravRedshift = sqrt(max(0.0, 1.0 - u_rs / max(r, 0.001)));
+      float shift = dopplerFactor * gravRedshift;
+
+      float baseTemp = u_diskTemperature * pow(isco * 1.15 / max(r, 0.001), 1.35);
+      vec3 thermalColor = blackbody(baseTemp * shift);
+      float tempFactor = clamp((baseTemp * shift - 1500.0) / 12000.0, 0.0, 1.0);
+      vec3 col = applyPalette(thermalColor, tempFactor);
+
+      float musicPulse = 1.0 + 0.28 * u_audioIntensity;
+      float intensity = pow(max(shift, 0.0), 4.0) * musicPulse;
+      col *= intensity * 2.7;
+
+      return vec4(col, clamp(alpha * 0.92, 0.0, 1.0));
+    }
+
+    // ---- Background sky / starfield ---------------------------------------
+    vec3 shadeSky(vec3 dir, vec3 originForFold) {
+      vec3 d = dir;
+      if (u_isTesseract && originForFold.z < 0.0) d = reflect(dir, vec3(0.0,0.0,1.0));
+
+      vec3 sky = vec3(0.0);
+
+      if (u_showStars) {
+        float density = clamp(u_starCount / 5000.0, 0.0, 1.0);
+        float threshold = mix(0.9999, 0.975, density);
+        float twinkle = u_starTwinkle ? (0.75 + 0.25 * sin(u_time * 3.0 + d.x * 40.0 + d.y * 17.0)) : 1.0;
+
+        float s1 = smoothstep(threshold, 1.0, starHash(d * 300.0));
+        float band = exp(-12.0 * abs(d.y));
+        float s2 = smoothstep(max(threshold - 0.012, 0.94), 1.0, starHash(d * 360.0 + 1.0)) * band;
+
+        sky += vec3(s1) * vec3(1.0,0.92,0.85) * 4.0 * twinkle * u_starBrightness;
+        sky += vec3(s2) * vec3(0.6,0.75,1.0) * 3.0 * twinkle * u_starBrightness;
+
+        float cloud = fbm(d.xy * 6.0) * fbm(d.yz * 6.0);
+        sky += vec3(0.02,0.06,0.14) * cloud * band * u_starBrightness;
+      }
+
+      if (u_hawkingRadiation > 0.0) {
+        float glow = fbm(d.xy * 14.0 + u_time * 0.3) * u_hawkingRadiation;
+        sky += vec3(0.25,0.6,1.0) * glow * 0.5;
+      }
+      return sky;
+    }
+
+    // ---- Primary integrator -----------------------------------------------
+    vec3 traceRay(vec2 uv) {
+      vec3 ro = u_cameraPos;
+      vec3 rd = normalize(uv.x * u_cameraRight + uv.y * u_cameraUp + 1.2 * u_cameraDir);
+
+      vec3 p = ro, v = rd;
+      vec3 L = cross(p, v);
+      float h2 = dot(L, L);
+
+      vec3 accum = vec3(0.0);
+      float alphaLeft = 1.0;
+      float rHorizon = eventHorizonRadius();
+
+      for (int i = 0; i < 1000; i++) {
+        if (i >= u_maxSteps) break;
+        float r = length(p);
+
+        if (!u_isTesseract && r < rHorizon * 1.02) break;
+        if (u_isTesseract && abs(r - rHorizon) < 0.08) p.z = -p.z;
+
+        if (r > 48.0) {
+          vec3 skyCol = shadeSky(normalize(v), p);
+          if (u_noiseReduction > 0.0) {
+            skyCol = mix(skyCol, skyCol * (0.92 + 0.16 * noise(uv * 60.0)), u_noiseReduction * 0.12);
+          }
+          accum += alphaLeft * skyCol;
+          break;
         }
 
-        // --- Persistent Configuration System via localStorage ---
-        const STORAGE_KEY = 'interstellar_1080p_engine_v7';
-        
-        const defaultParams = {
-            fps: 60,
-            profile: 'High',
-            bhType: 'Kerr',
-            classification: 'Supermassive',
-            rs: 1.0,
-            spin: 0.85,
-            charge: 0.0,
-            isTesseract: false,
-            ehtMode: false,
-            showPhotonSphere: true,
-            hawkingRadiation: 0.1,
-            diskDensity: 1.5,
-            diskViscosity: 0.8,
-            diskParticleDensity: 1.4,
-            diskEdgeSoftness: 0.6,
-            textureFiltering: 1.0,
-            starCount: 2500,
-            stepMultiplier: 0.018,
-            maxSteps: 450,
-            samples: 2,
-            noiseReduction: 0.3,
-            bloomStrength: 1.4,
-            bloomRadius: 0.8,
-            bloomThreshold: 0.4,
-            chromaticAberration: 0.008,
-            lensFlare: 1.2,
-            exposure: 1.0,
-            vignetteEffect: 0.6,
-            motionBlurIntensity: 0.4,
-            masterVolume: 0.8,
-            cinematicMode: false,
-            cinematicCamMode: 'Front Orbit',
-            musicReactivity: true,
-            dynamicCinematic: false,
-            cameraEffects: true,
-            pathComplexity: 1.2,
-            transitionSpeed: 1.0,
-            focalDepth: 1.0,
-            recordCinematic: false
-        };
-
-        function loadConfig() {
-            try {
-                const saved = localStorage.getItem(STORAGE_KEY);
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    return { ...defaultParams, ...parsed };
-                }
-            } catch(e) { console.warn('Failed to load local config', e); }
-            return { ...defaultParams };
+        if (u_showPhotonSphere && abs(r - u_rs * 1.5) < 0.035) {
+          accum += alphaLeft * vec3(0.15,0.45,0.9) * 0.35;
         }
 
-        function saveConfig() {
-            try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
-                alert('Configuration successfully saved to local storage!');
-            } catch(e) { alert('Failed to save configuration.'); }
+        float dt = clamp(u_stepMultiplier * r, 0.0015, 0.5);
+        vec3 pOld = p;
+
+        // RK4 integration of the (stylized) geodesic.
+        vec3 k1v = geodesicAccel(p, h2, v);              vec3 k1p = v;
+        vec3 k2v = geodesicAccel(p + 0.5*dt*k1p, h2, v + 0.5*dt*k1v); vec3 k2p = v + 0.5*dt*k1v;
+        vec3 k3v = geodesicAccel(p + 0.5*dt*k2p, h2, v + 0.5*dt*k2v); vec3 k3p = v + 0.5*dt*k2v;
+        vec3 k4v = geodesicAccel(p + dt*k3p, h2, v + dt*k3p);         vec3 k4p = v + dt*k3p;
+
+        p += (dt/6.0) * (k1p + 2.0*k2p + 2.0*k3p + k4p);
+        v += (dt/6.0) * (k1v + 2.0*k2v + 2.0*k3v + k4v);
+
+        vec4 disk = shadeDisk(pOld, p, normalize(v));
+        if (disk.a > 0.0) {
+          accum += alphaLeft * disk.rgb * disk.a;
+          alphaLeft *= (1.0 - disk.a);
         }
-
-        const params = loadConfig();
-
-        // --- Web Audio API Setup (Without Flashes) ---
-        let audioEl = document.getElementById('audio-track');
-        let audioCtx = null;
-        let analyser = null;
-        let dataArray = null;
-        let audioSourceNode = null;
-        let masterGainNode = null;
-        let audioIntensity = 0.0;
-
-        function initAudioEngine() {
-            if (audioCtx) return;
-            try {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                analyser = audioCtx.createAnalyser();
-                analyser.fftSize = 512;
-                
-                audioSourceNode = audioCtx.createMediaElementSource(audioEl);
-                masterGainNode = audioCtx.createGain();
-                masterGainNode.gain.value = 0.001; 
-                
-                audioSourceNode.connect(masterGainNode);
-                masterGainNode.connect(analyser);
-                analyser.connect(audioCtx.destination);
-
-                dataArray = new Uint8Array(analyser.frequencyBinCount);
-            } catch(e) {
-                console.warn('Web Audio API initialization note:', e);
-            }
-        }
-
-        function smoothVolumeTransition(targetVol, duration = 1500) {
-            if (!masterGainNode || !audioCtx) {
-                audioEl.volume = targetVol;
-                return;
-            }
-            const now = audioCtx.currentTime;
-            const startVol = masterGainNode.gain.value;
-            masterGainNode.gain.cancelScheduledValues(now);
-            masterGainNode.gain.setValueAtTime(startVol, now);
-            masterGainNode.gain.linearRampToValueAtTime(Math.max(targetVol, 0.0001), now + (duration / 1000.0));
-        }
-
-        function updateAudioAnalysis() {
-            if (!analyser || audioEl.paused) {
-                audioIntensity = 0.0;
-                return;
-            }
-            analyser.getByteFrequencyData(dataArray);
-            let bassSum = 0;
-            for (let i = 0; i < 12; i++) {
-                bassSum += dataArray[i];
-            }
-            audioIntensity = (bassSum / 12.0) / 255.0;
-        }
-
-        // --- Full HD 1080p MediaRecorder System ---
-        let mediaRecorder = null;
-        let recordedChunks = [];
-        let origWidth = window.innerWidth;
-        let origHeight = window.innerHeight;
-
-        function toggleRecording(recording) {
-            const banner = document.getElementById('stop-recording-banner');
-            if (recording) {
-                recordedChunks = [];
-                
-                // Force canvas to exact Full HD 1080p resolution (1920x1080) for high-quality capture
-                origWidth = window.innerWidth;
-                origHeight = window.innerHeight;
-                renderer.setSize(1920, 1080, false);
-                composer.setSize(1920, 1080);
-                material.uniforms.u_resolution.value.set(1920, 1080);
-
-                const stream = renderer.domElement.captureStream(60);
-                try {
-                    mediaRecorder = new MediaRecorder(stream, { 
-                        mimeType: 'video/webm;codecs=vp9',
-                        videoBitsPerSecond: 15000000 // Optimized 15 Mbps bitrate for smooth 1080p60
-                    });
-                } catch (e) {
-                    try {
-                        mediaRecorder = new MediaRecorder(stream, { 
-                            mimeType: 'video/webm',
-                            videoBitsPerSecond: 15000000 
-                        });
-                    } catch (err) {
-                        alert('MediaRecorder capture not supported on this browser.');
-                        params.recordCinematic = false;
-                        return;
-                    }
-                }
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data && event.data.size > 0) {
-                        recordedChunks.push(event.data);
-                    }
-                };
-                mediaRecorder.onstop = () => {
-                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.style.display = 'none';
-                    a.href = url;
-                    a.download = 'black_hole_cinematic_1080p.webm';
-                    document.body.appendChild(a);
-                    a.click();
-                    setTimeout(() => {
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-                    }, 100);
-
-                    // Restore original window resolution
-                    renderer.setSize(origWidth, origHeight, false);
-                    composer.setSize(origWidth, origHeight);
-                    material.uniforms.u_resolution.value.set(origWidth, origHeight);
-                };
-                mediaRecorder.start();
-                banner.style.display = 'block';
-            } else {
-                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                    mediaRecorder.stop();
-                }
-                banner.style.display = 'none';
-            }
-        }
-
-        function stopRecordingViaBanner() {
-            params.recordCinematic = false;
-            toggleRecording(false);
-            recordController.updateDisplay();
-        }
-
-        // --- lil-gui Setup ---
-        const gui = new lil.GUI({ title: '1080p Cinematic Dashboard' });
-
-        gui.add(params, 'fps', 0, 120).name('Live FPS').listen().disable();
-
-        // Cinematic & Audio Tab
-        const cineFolder = gui.addFolder('1080p Cinematic Suite');
-        cineFolder.add(params, 'cinematicMode').name('Cinematic Mode').onChange(val => {
-            initAudioEngine();
-            if (val) {
-                cinematicAngle = 0.0;
-                cutTimer = 0.0;
-                clock.start();
-
-                audioEl.play().catch(e => console.log("Autoplay restriction:", e));
-                smoothVolumeTransition(params.masterVolume, 1500);
-                document.body.classList.add('cinematic');
-            } else {
-                smoothVolumeTransition(0.0, 1000);
-                setTimeout(() => audioEl.pause(), 1000);
-                document.body.classList.remove('cinematic');
-                if (params.recordCinematic) {
-                    params.recordCinematic = false;
-                    toggleRecording(false);
-                }
-            }
-        });
-        cineFolder.add(params, 'cinematicCamMode', ['Front Orbit', 'Handheld Shake', 'Slow Dolly']).name('Camera Mode');
-        cineFolder.add(params, 'musicReactivity').name('Music Reactivity');
-        cineFolder.add(params, 'dynamicCinematic').name('Dynamic Automation');
-        cineFolder.add(params, 'cameraEffects').name('Camera Effects (Post)');
-        cineFolder.add(params, 'pathComplexity', 0.5, 3.0).name('Path Complexity');
-        cineFolder.add(params, 'transitionSpeed', 0.2, 2.5).name('Transition Speed');
-        cineFolder.add(params, 'focalDepth', 0.5, 2.0).name('Focal Depth');
-        
-        const recordController = cineFolder.add(params, 'recordCinematic').name('🔴 Record 1080p Video').onChange(val => {
-            if (val && !params.cinematicMode) {
-                params.cinematicMode = true;
-                cinematicAngle = 0.0;
-                cutTimer = 0.0;
-                clock.start();
-                audioEl.play().catch(e => {});
-                smoothVolumeTransition(params.masterVolume, 1500);
-                document.body.classList.add('cinematic');
-            }
-            toggleRecording(val);
-        });
-        cineFolder.add(params, 'masterVolume', 0.0, 1.0).name('Master Volume').onChange(v => {
-            if (masterGainNode) masterGainNode.gain.value = v;
-            audioEl.volume = v;
-        });
-
-        // Theoretical Physics Tab
-        const physFolder = gui.addFolder('Theoretical Physics');
-        physFolder.add(params, 'bhType', ['Schwarzschild', 'Kerr', 'Reissner-Nordstrom', 'Kerr-Newman']).name('Metric');
-        physFolder.add(params, 'spin', 0.0, 0.99).name('Kerr Spin (a)').listen();
-        physFolder.add(params, 'charge', 0.0, 0.95).name('Charge (Q)').listen();
-        physFolder.add(params, 'isTesseract').name('Tesseract Spacetime Warp');
-        physFolder.add(params, 'showPhotonSphere').name('Photon Sphere Markers');
-        physFolder.add(params, 'hawkingRadiation', 0.0, 1.0).name('Hawking Radiation');
-
-        // Granular Quality & Fidelity Sliders Tab
-        const qualityFolder = gui.addFolder('Visual Fidelity & Quality');
-        qualityFolder.add(params, 'profile', ['Ultra', 'High', 'Medium', 'Low']).name('Preset').onChange(val => {
-            if (val === 'Ultra') { params.maxSteps = 650; params.samples = 2; params.bloomStrength = 1.6; params.stepMultiplier = 0.012; params.noiseReduction = 0.2; }
-            else if (val === 'High') { params.maxSteps = 450; params.samples = 2; params.bloomStrength = 1.4; params.stepMultiplier = 0.018; params.noiseReduction = 0.3; }
-            else if (val === 'Medium') { params.maxSteps = 280; params.samples = 1; params.bloomStrength = 1.1; params.stepMultiplier = 0.028; params.noiseReduction = 0.7; }
-            else if (val === 'Low') { params.maxSteps = 140; params.samples = 1; params.bloomStrength = 0.5; params.stepMultiplier = 0.045; params.noiseReduction = 1.0; }
-            bloomPass.strength = params.bloomStrength;
-        });
-        qualityFolder.add(params, 'textureFiltering', 0.5, 2.0, 0.1).name('Texture Filtering').listen();
-        qualityFolder.add(params, 'diskParticleDensity', 0.5, 3.0, 0.1).name('Particle Density').listen();
-        qualityFolder.add(params, 'diskEdgeSoftness', 0.1, 2.0, 0.1).name('Disk Edge Softness').listen();
-        qualityFolder.add(params, 'exposure', 0.5, 2.0).name('Exposure').listen();
-        qualityFolder.add(params, 'vignetteEffect', 0.0, 1.5).name('Vignette Intensity');
-        qualityFolder.add(params, 'motionBlurIntensity', 0.0, 1.0).name('Motion Blur');
-        qualityFolder.add(params, 'samples', 1, 3, 1).name('Samples Per Pixel');
-        qualityFolder.add(params, 'bloomStrength', 0.0, 3.0).name('Bloom Intensity').listen().onChange(v => bloomPass.strength = v);
-        qualityFolder.add(params, 'maxSteps', 100, 800, 10).name('Ray-March Steps').listen();
-        qualityFolder.add(params, 'stepMultiplier', 0.005, 0.05).name('Step Precision').listen();
-
-        // Environment & Scaling Tab
-        const envFolder = gui.addFolder('Environment & Scaling');
-        envFolder.add(params, 'classification', ['Stellar-Mass', 'Intermediate-Mass', 'Supermassive', 'Primordial']).name('Mass Scale').onChange(val => {
-            if (val === 'Stellar-Mass') { params.rs = 0.6; params.diskDensity = 1.8; }
-            else if (val === 'Intermediate-Mass') { params.rs = 1.0; params.diskDensity = 1.5; }
-            else if (val === 'Supermassive') { params.rs = 1.4; params.diskDensity = 1.2; }
-            else if (val === 'Primordial') { params.rs = 0.25; params.diskDensity = 2.5; }
-        });
-        envFolder.add(params, 'diskDensity', 0.0, 3.0).name('Disk Density').listen();
-        envFolder.add(params, 'diskViscosity', 0.1, 2.0).name('Disk Viscosity');
-        envFolder.add(params, 'starCount', 0, 5000.0, 10.0).name('Star Density');
-
-        // Persistence Button
-        gui.add({ save: saveConfig }, 'save').name('💾 Save Configuration');
-
-        gui.domElement.style.position = 'absolute';
-        gui.domElement.style.top = '15px';
-        gui.domElement.style.right = '15px';
-
-        // --- Three.js Setup ---
-        const container = document.getElementById('canvas-container');
-        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        container.appendChild(renderer.domElement);
-
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 2.5, 18);
-
-        const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.minDistance = 2.0;
-        controls.maxDistance = 50.0;
-
-        // --- Post-Processing Setup ---
-        const renderScene = new THREE.Scene();
-        const composer = new THREE.EffectComposer(renderer);
-        const renderPass = new THREE.RenderPass(renderScene, camera);
-        composer.addPass(renderPass);
-
-        const bloomPass = new THREE.UnrealBloomPass(
-            new THREE.Vector2(window.innerWidth, window.innerHeight),
-            params.bloomStrength, params.bloomRadius, params.bloomThreshold
-        );
-        composer.addPass(bloomPass);
-
-        // --- GLSL Shader Definition (Incorporating Particle Density & Edge Softness) ---
-        const fragmentShader = `
-            uniform vec2 u_resolution;
-            uniform vec3 u_cameraPos;
-            uniform vec3 u_cameraDir;
-            uniform vec3 u_cameraUp;
-            uniform vec3 u_cameraRight;
-            
-            uniform float u_time;
-            uniform float u_rs;
-            uniform float u_spin;
-            uniform float u_charge;
-            uniform int u_bhType; 
-            uniform bool u_isTesseract;
-            uniform bool u_ehtMode;
-            uniform bool u_showPhotonSphere;
-            uniform float u_hawkingRadiation;
-            uniform float u_diskDensity;
-            uniform float u_diskViscosity;
-            uniform float u_diskParticleDensity;
-            uniform float u_diskEdgeSoftness;
-            uniform float u_textureFiltering;
-            uniform float u_starCount;
-            uniform float u_stepMultiplier;
-            uniform int u_maxSteps;
-            uniform int u_samples;
-            uniform float u_noiseReduction;
-            uniform float u_audioIntensity;
-            uniform float u_chromaticAberration;
-            uniform float u_lensFlare;
-            uniform float u_exposure;
-            uniform float u_vignetteEffect;
-            uniform bool u_cameraEffects;
-
-            vec2 hash2(vec2 p) {
-                p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
-                return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
-            }
-            
-            float noise(vec2 p) {
-                vec2 i = floor(p); vec2 f = fract(p);
-                vec2 u = f*f*(3.0-2.0*f);
-                return mix(mix(dot(hash2(i + vec2(0.0,0.0)), f - vec2(0.0,0.0)), 
-                               dot(hash2(i + vec2(1.0,0.0)), f - vec2(1.0,0.0)), u.x),
-                           mix(dot(hash2(i + vec2(0.0,1.0)), f - vec2(0.0,1.0)), 
-                               dot(hash2(i + vec2(1.0,1.0)), f - vec2(1.0,1.0)), u.x), u.y);
-            }
-            
-            float fbm(vec2 p) {
-                float f = 0.0, amp = 0.5;
-                for(int i = 0; i < 4; i++) {
-                    f += amp * noise(p * u_textureFiltering);
-                    p *= 2.0; amp *= 0.5;
-                }
-                return f;
-            }
-
-            float highFreqNoise(vec2 p) {
-                return noise(p * 8.0 * u_diskParticleDensity) * 0.5 + noise(p * 16.0 * u_diskParticleDensity) * 0.25;
-            }
-
-            float starHash(vec3 p) {
-                p = fract(p * 0.3183099 + 0.1);
-                p *= 17.0;
-                return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-            }
-
-            vec3 ACESFilm(vec3 x) {
-                float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-                return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
-            }
-
-            float getEventHorizon() {
-                if (u_isTesseract) return u_rs * 0.4;
-                float M = u_rs * 0.5;
-                if (u_bhType == 0) return u_rs;
-                if (u_bhType == 1) {
-                    float a = clamp(u_spin, 0.0, 0.99 * M);
-                    return M + sqrt(max(0.0, M*M - a*a));
-                }
-                if (u_bhType == 2) {
-                    float Q = clamp(u_charge, 0.0, M);
-                    return M + sqrt(max(0.0, M*M - Q*Q));
-                }
-                {
-                    float a = clamp(u_spin, 0.0, 0.99 * M);
-                    float Q = clamp(u_charge, 0.0, M);
-                    return M + sqrt(max(0.0, M*M - a*a - Q*Q));
-                }
-            }
-
-            vec3 getAcceleration(vec3 p, float h2, vec3 v) {
-                float r2 = dot(p, p);
-                float r = sqrt(r2);
-                
-                if (u_isTesseract) {
-                    return (-1.5 * u_rs * h2 * p / (r2 * r2 * r)) * (1.0 + 0.5 * sin(u_time + r));
-                }
-
-                vec3 acc = -1.5 * u_rs * h2 * p / (r2 * r2 * r);
-                
-                if (u_bhType == 2 || u_bhType == 3) {
-                    float Q2 = u_charge * u_charge;
-                    acc += (Q2 * u_rs / (r2 * r2 * r)) * p;
-                }
-                
-                if (u_bhType == 1 || u_bhType == 3) {
-                    vec3 rotAxis = vec3(0.0, 1.0, 0.0);
-                    vec3 drag = cross(v, rotAxis) * (u_spin / (r2 * r));
-                    acc += drag * 7.0; 
-                }
-                
-                return acc;
-            }
-
-            vec3 getBlackbodyColor(float temp) {
-                float t = clamp(temp, 1000.0, 15000.0);
-                vec3 c; c.r = 1.0;
-                c.g = clamp((t - 1500.0) / 4500.0, 0.0, 1.0);
-                c.b = clamp((t - 3500.0) / 6000.0, 0.0, 1.0);
-                if (t > 8000.0) {
-                    float blueShift = clamp((t - 8000.0) / 5000.0, 0.0, 1.0);
-                    c.r -= blueShift * 0.4; c.g -= blueShift * 0.2;
-                }
-                return c;
-            }
-
-            vec4 renderDisk(vec3 p_old, vec3 p, vec3 v_ray) {
-                float isco = u_rs * 2.8;
-                float outer = u_rs * 12.0;
-                
-                if (p_old.y * p.y <= 0.0) {
-                    float t_cross = p_old.y / (p_old.y - p.y);
-                    vec3 hit = mix(p_old, p, t_cross);
-                    float r = length(hit.xz);
-                    
-                    if (r >= isco && r <= outer) {
-                        float angle = atan(hit.z, hit.x);
-                        float swirl = angle + r * u_diskViscosity - u_time * 0.5;
-                        
-                        float n = fbm(vec2(r * 3.5, swirl));
-                        float micro = highFreqNoise(vec2(r * 2.0, swirl * 2.0));
-                        float finalNoise = clamp(n + micro * 0.3, 0.0, 1.0);
-                        
-                        // Adjustable edge softness
-                        float soft = max(0.1, u_diskEdgeSoftness);
-                        float innerMask = smoothstep(isco, isco + 0.2 + soft, r);
-                        float outerMask = smoothstep(outer, outer - (0.5 * soft), r);
-                        float alpha = innerMask * outerMask * (0.4 + 0.6 * finalNoise) * u_diskDensity;
-                        
-                        if (alpha > 0.0) {
-                            vec3 v_plasma = normalize(vec3(hit.z, 0.0, -hit.x)); 
-                            float v_orb = sqrt((u_rs * 0.5) / r);
-                            v_plasma *= v_orb;
-                            
-                            float D = sqrt(1.0 - v_orb * v_orb) / (1.0 + dot(v_ray, v_plasma));
-                            float g_grav = sqrt(max(0.0, 1.0 - u_rs / r));
-                            float shift = D * g_grav;
-                            
-                            float baseTemp = 7000.0 * pow(isco * 1.2 / r, 1.4); 
-                            vec3 col = getBlackbodyColor(baseTemp * shift);
-                            
-                            float pulseIntensity = 1.0 + 0.3 * u_audioIntensity;
-                            float intensity = pow(shift, 4.0) * pulseIntensity;
-                            col *= intensity * 2.8; 
-                            
-                            return vec4(col, clamp(alpha * 0.92, 0.0, 1.0));
-                        }
-                    }
-                }
-                return vec4(0.0);
-            }
-
-            vec3 getSky(vec3 dir, vec3 rayOriginForTesseract) {
-                if (u_isTesseract && rayOriginForTesseract.z < 0.0) {
-                    dir = reflect(dir, vec3(0.0, 0.0, 1.0));
-                }
-
-                float normCount = clamp(u_starCount / 5000.0, 0.0, 1.0);
-                float threshold = mix(0.9999, 0.978, normCount);
-                
-                float n = starHash(dir * 300.0);
-                float star = smoothstep(threshold, 1.0, n);
-                
-                float band = exp(-12.0 * abs(dir.y));
-                float star2 = smoothstep(max(threshold - 0.012, 0.94), 1.0, starHash(dir * 360.0 + 1.0)) * band;
-                
-                vec3 sky = vec3(star) * vec3(1.0, 0.92, 0.85) * 4.0 + vec3(star2) * vec3(0.6, 0.75, 1.0) * 3.0;
-                
-                float cloud = fbm(dir.xy * 6.0) * fbm(dir.yz * 6.0);
-                sky += vec3(0.02, 0.06, 0.14) * cloud * band;
-
-                if (u_hawkingRadiation > 0.0) {
-                    float hawkingGlow = fbm(dir.xy * 14.0 + u_time * 0.3) * u_hawkingRadiation;
-                    sky += vec3(0.25, 0.6, 1.0) * hawkingGlow * 0.5;
-                }
-
-                return sky;
-            }
-
-            vec3 traceRay(vec2 uv) {
-                vec3 ro = u_cameraPos;
-                vec3 rd = normalize(uv.x * u_cameraRight + uv.y * u_cameraUp + 1.2 * u_cameraDir);
-
-                vec3 p = ro;
-                vec3 v = rd;
-                vec3 L = cross(p, v);
-                float h2 = dot(L, L);
-                
-                vec3 finalColor = vec3(0.0);
-                float alphaLeft = 1.0;
-                float horizonRadius = getEventHorizon();
-                
-                for(int i = 0; i < 1000; i++) {
-                    if (i >= u_maxSteps) break;
-                    
-                    float r = length(p);
-                    
-                    if (!u_isTesseract && r < horizonRadius * 1.02) break;
-                    if (u_isTesseract && abs(r - horizonRadius) < 0.08) {
-                        p.z = -p.z; 
-                    }
-                    
-                    if (r > 48.0) {
-                        vec3 skyCol = getSky(normalize(v), p);
-                        if (u_noiseReduction > 0.0) {
-                            skyCol = mix(skyCol, skyCol * (0.92 + 0.16 * noise(uv * 60.0)), u_noiseReduction * 0.12);
-                        }
-                        finalColor += alphaLeft * skyCol;
-                        break;
-                    }
-
-                    if (u_showPhotonSphere && abs(r - u_rs * 1.5) < 0.04) {
-                        finalColor += alphaLeft * vec3(0.15, 0.45, 0.9) * 0.35;
-                    }
-                    
-                    float dt = clamp(u_stepMultiplier * r, 0.0015, 0.5);
-                    vec3 p_old = p;
-                    
-                    vec3 k1_v = getAcceleration(p, h2, v);
-                    vec3 k1_p = v;
-                    vec3 k2_v = getAcceleration(p + 0.5 * dt * k1_p, h2, v + 0.5 * dt * k1_v);
-                    vec3 k2_p = v + 0.5 * dt * k1_p;
-                    vec3 k3_v = getAcceleration(p + 0.5 * dt * k2_p, h2, v + 0.5 * dt * k2_v);
-                    vec3 k3_p = v + 0.5 * dt * k2_v;
-                    vec3 k4_v = getAcceleration(p + dt * k3_p, h2, v + dt * k3_p);
-                    vec3 k4_p = v + dt * k3_p;
-                    
-                    p += (dt / 6.0) * (k1_p + 2.0 * k2_p + 2.0 * k3_p + k4_p);
-                    v += (dt / 6.0) * (k1_v + 2.0 * k2_v + 2.0 * k3_v + k4_v);
-                    
-                    vec4 diskData = renderDisk(p_old, p, normalize(v));
-                    if (diskData.a > 0.0) {
-                        finalColor += alphaLeft * diskData.rgb * diskData.a;
-                        alphaLeft *= (1.0 - diskData.a);
-                    }
-                    
-                    if (alphaLeft <= 0.01) break;
-                }
-                
-                return finalColor;
-            }
-
-            void main() {
-                vec3 color = vec3(0.0);
-                vec2 centerUV = gl_FragCoord.xy / u_resolution.xy - 0.5;
-                // Smooth constant chromatic aberration without sudden peaks/bursts
-                float ca = u_cameraEffects ? u_chromaticAberration : 0.0;
-                
-                int samples = u_samples;
-                for(int s = 0; s < 3; s++) {
-                    if (s >= samples) break;
-                    float fS = float(s);
-                    vec2 jitter = (samples > 1) ? (vec2(mod(fS, 2.0), floor(fS / 2.0)) - 0.5) * 0.4 : vec2(0.0);
-                    
-                    vec2 uvR = (gl_FragCoord.xy + jitter - 0.5 * u_resolution.xy) / u_resolution.y * (1.0 + ca);
-                    vec2 uvG = (gl_FragCoord.xy + jitter - 0.5 * u_resolution.xy) / u_resolution.y;
-                    vec2 uvB = (gl_FragCoord.xy + jitter - 0.5 * u_resolution.xy) / u_resolution.y * (1.0 - ca);
-                    
-                    color.r += traceRay(uvR).r;
-                    color.g += traceRay(uvG).g;
-                    color.b += traceRay(uvB).b;
-                }
-                color /= float(samples);
-
-                if (u_ehtMode) {
-                    float vlbiGrid = step(0.7, sin(gl_FragCoord.y * 0.4) * cos(gl_FragCoord.x * 0.4));
-                    color *= mix(0.85, 1.0, vlbiGrid);
-                }
-
-                if (u_cameraEffects && u_lensFlare > 0.0) {
-                    float flare = exp(-abs(centerUV.y * 14.0)) * (color.r + color.g + color.b) * 0.15 * u_lensFlare;
-                    color += vec3(flare * 0.3, flare * 0.65, flare * 1.0);
-                }
-
-                color *= u_exposure;
-                float distFromCenter = length(centerUV);
-                float vig = 1.0 - distFromCenter * distFromCenter * u_vignetteEffect * 2.0;
-                color *= clamp(vig, 0.0, 1.0);
-                
-                color = ACESFilm(color);
-                color = pow(color, vec3(1.0 / 2.2));
-                
-                gl_FragColor = vec4(color, 1.0);
-            }
-        `;
-
-        const vertexShader = `
-            void main() { gl_Position = vec4(position, 1.0); }
-        `;
-
-        function getBHTypeCode(typeStr) {
-            if (typeStr === 'Kerr') return 1;
-            if (typeStr === 'Reissner-Nordstrom') return 2;
-            if (typeStr === 'Kerr-Newman') return 3;
-            return 0;
-        }
-
-        const material = new THREE.ShaderMaterial({
-            uniforms: {
-                u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-                u_cameraPos: { value: new THREE.Vector3() },
-                u_cameraDir: { value: new THREE.Vector3() },
-                u_cameraUp: { value: new THREE.Vector3() },
-                u_cameraRight: { value: new THREE.Vector3() },
-                u_time: { value: 0.0 },
-                u_rs: { value: params.rs },
-                u_spin: { value: params.spin },
-                u_charge: { value: params.charge },
-                u_bhType: { value: 1 },
-                u_isTesseract: { value: params.isTesseract },
-                u_ehtMode: { value: params.ehtMode },
-                u_showPhotonSphere: { value: params.showPhotonSphere },
-                u_hawkingRadiation: { value: params.hawkingRadiation },
-                u_diskDensity: { value: params.diskDensity },
-                u_diskViscosity: { value: params.diskViscosity },
-                u_diskParticleDensity: { value: params.diskParticleDensity },
-                u_diskEdgeSoftness: { value: params.diskEdgeSoftness },
-                u_textureFiltering: { value: params.textureFiltering },
-                u_starCount: { value: params.starCount },
-                u_stepMultiplier: { value: params.stepMultiplier },
-                u_maxSteps: { value: params.maxSteps },
-                u_samples: { value: params.samples },
-                u_noiseReduction: { value: params.noiseReduction },
-                u_audioIntensity: { value: 0.0 },
-                u_chromaticAberration: { value: params.chromaticAberration },
-                u_lensFlare: { value: params.lensFlare },
-                u_exposure: { value: params.exposure },
-                u_vignetteEffect: { value: params.vignetteEffect },
-                u_cameraEffects: { value: params.cameraEffects }
-            },
-            vertexShader: vertexShader,
-            fragmentShader: fragmentShader,
-            depthWrite: false, depthTest: false
-        });
-
-        const geometry = new THREE.BufferGeometry();
-        const vertices = new Float32Array([
-            -1.0, -1.0, 1.0,   1.0, -1.0, 1.0,   -1.0,  1.0, 1.0,
-             1.0, -1.0, 1.0,   1.0,  1.0, 1.0,   -1.0,  1.0, 1.0
-        ]);
-        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-        renderScene.add(new THREE.Mesh(geometry, material));
-
-        window.addEventListener('resize', () => {
-            if (!params.recordCinematic) {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                composer.setSize(window.innerWidth, window.innerHeight);
-                material.uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
-            }
-        });
-
-        const clock = new THREE.Clock();
-        let frameCount = 0;
-        let lastFpsUpdate = 0;
-        let cinematicAngle = 0.0;
-        let cutTimer = 0.0;
-
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            const dtDelta = clock.getDelta();
-            const time = clock.getElapsedTime();
-            
-            // FPS Calculation & GUI Sync
-            frameCount++;
-            if (time - lastFpsUpdate > 0.3) {
-                params.fps = Math.round(frameCount / (time - lastFpsUpdate));
-                frameCount = 0;
-                lastFpsUpdate = time;
-            }
-
-            updateAudioAnalysis();
-
-            // Dynamic Parameter Automation
-            if (params.dynamicCinematic && params.cinematicMode) {
-                params.bloomStrength = 1.4 + Math.sin(time * 1.2) * 0.7;
-                params.diskDensity = 1.5 + Math.cos(time * 0.9) * 0.6;
-                params.exposure = 1.0 + Math.sin(time * 0.6) * 0.35;
-                bloomPass.strength = params.bloomStrength;
-            }
-
-            // Smooth Lens Zoom without jarring flash interruptions
-            if (params.cinematicMode) {
-                let lensBreath = Math.sin(time * 3.5) * 1.2 * params.focalDepth;
-                let targetFov = 60.0 - (params.musicReactivity ? audioIntensity * 8.0 : 4.0) + lensBreath;
-                camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.12);
-                camera.updateProjectionMatrix();
-            } else {
-                camera.fov = THREE.MathUtils.lerp(camera.fov, 60.0, 0.08);
-                camera.updateProjectionMatrix();
-            }
-
-            // Multi-Mode Cinematic Camera Paths focused on Front-Profile View
-            if (params.cinematicMode) {
-                controls.enabled = false;
-                
-                let speedScale = (0.25 + (params.musicReactivity ? audioIntensity * 0.8 : 0.0)) * params.transitionSpeed;
-                cinematicAngle += speedScale * dtDelta;
-
-                let shakeX = 0.0;
-                let shakeY = 0.0;
-                let shakeZ = 0.0;
-
-                if (params.cinematicCamMode === 'Handheld Shake' && params.cameraEffects) {
-                    let blurMult = params.motionBlurIntensity;
-                    shakeX = (Math.sin(time * 12.0) * Math.cos(time * 7.0)) * 0.35 * (0.8 + blurMult);
-                    shakeY = (Math.cos(time * 10.0) * Math.sin(time * 8.0)) * 0.35 * (0.8 + blurMult);
-                    shakeZ = (Math.sin(time * 9.0)) * 0.25 * (0.8 + blurMult);
-                }
-
-                if (params.cinematicCamMode === 'Slow Dolly') {
-                    // Slow tracking dolly moving smoothly back and forth along depth axis
-                    const dollyDist = 14.0 + Math.sin(time * 0.4) * 5.0;
-                    camera.position.set(shakeX, 1.5 + shakeY, dollyDist + shakeZ);
-                    camera.lookAt(0, 0, 0);
-                } else {
-                    // Front Orbit / Handheld Orbit mode keeping equatorial front profile view
-                    const radius = 15.0 + Math.sin(cinematicAngle * 0.2 * params.pathComplexity) * 2.5;
-                    const theta = cinematicAngle * params.pathComplexity;
-                    const phi = Math.sin(cinematicAngle * 0.3) * 0.2; // Strictly shallow angle for front Einstein ring focus
-
-                    camera.position.x = Math.sin(theta) * Math.cos(phi) * radius + shakeX;
-                    camera.position.z = Math.cos(theta) * Math.cos(phi) * radius + shakeZ;
-                    camera.position.y = Math.sin(phi) * radius + 1.2 + shakeY;
-                    camera.lookAt(0, 0, 0);
-                }
-            } else {
-                controls.enabled = true;
-                controls.update();
-            }
-
-            camera.updateMatrixWorld();
-            const camDir = new THREE.Vector3();
-            camera.getWorldDirection(camDir);
-            const camUp = new THREE.Vector3().copy(camera.up).applyMatrix4(
-                new THREE.Matrix4().extractRotation(camera.matrixWorld)
-            ).normalize();
-            const camRight = new THREE.Vector3().crossVectors(camDir, camUp).normalize();
-
-            // Sync Uniforms
-            material.uniforms.u_rs.value = params.rs;
-            material.uniforms.u_spin.value = params.spin;
-            material.uniforms.u_charge.value = params.charge;
-            material.uniforms.u_bhType.value = getBHTypeCode(params.bhType);
-            material.uniforms.u_isTesseract.value = params.isTesseract;
-            material.uniforms.u_ehtMode.value = params.ehtMode;
-            material.uniforms.u_showPhotonSphere.value = params.showPhotonSphere;
-            material.uniforms.u_hawkingRadiation.value = params.hawkingRadiation;
-            material.uniforms.u_diskDensity.value = params.diskDensity;
-            material.uniforms.u_diskViscosity.value = params.diskViscosity;
-            material.uniforms.u_diskParticleDensity.value = params.diskParticleDensity;
-            material.uniforms.u_diskEdgeSoftness.value = params.diskEdgeSoftness;
-            material.uniforms.u_textureFiltering.value = params.textureFiltering;
-            material.uniforms.u_starCount.value = params.starCount;
-            material.uniforms.u_stepMultiplier.value = params.stepMultiplier;
-            material.uniforms.u_maxSteps.value = params.maxSteps;
-            material.uniforms.u_samples.value = params.samples;
-            material.uniforms.u_noiseReduction.value = params.noiseReduction;
-            material.uniforms.u_audioIntensity.value = params.musicReactivity ? audioIntensity : 0.0;
-            material.uniforms.u_chromaticAberration.value = params.chromaticAberration;
-            material.uniforms.u_lensFlare.value = params.lensFlare;
-            material.uniforms.u_exposure.value = params.exposure;
-            material.uniforms.u_vignetteEffect.value = params.vignetteEffect;
-            material.uniforms.u_cameraEffects.value = params.cameraEffects;
-            
-            material.uniforms.u_cameraPos.value.copy(camera.position);
-            material.uniforms.u_cameraDir.value.copy(camDir);
-            material.uniforms.u_cameraUp.value.copy(camUp);
-            material.uniforms.u_cameraRight.value.copy(camRight);
-            material.uniforms.u_time.value = time;
-
-            composer.render();
-        }
-
-        animate();
-    </script>
+        if (alphaLeft <= 0.01) break;
+      }
+      return accum;
+    }
+
+    void main() {
+      vec2 fragCoord = vUv * u_resolution;
+      vec2 centerUV = vUv - 0.5;
+      float ca = u_cameraEffects ? u_chromaticAberration : 0.0;
+
+      vec3 color = vec3(0.0);
+      int samples = u_samples;
+      for (int s = 0; s < 3; s++) {
+        if (s >= samples) break;
+        float fS = float(s);
+        vec2 jitter = (samples > 1) ? (vec2(mod(fS,2.0), floor(fS/2.0)) - 0.5) * 0.4 : vec2(0.0);
+
+        vec2 uvR = (fragCoord + jitter - 0.5*u_resolution) / u_resolution.y * (1.0 + ca);
+        vec2 uvG = (fragCoord + jitter - 0.5*u_resolution) / u_resolution.y;
+        vec2 uvB = (fragCoord + jitter - 0.5*u_resolution) / u_resolution.y * (1.0 - ca);
+
+        color.r += traceRay(uvR).r;
+        color.g += traceRay(uvG).g;
+        color.b += traceRay(uvB).b;
+      }
+      color /= float(samples);
+
+      gl_FragColor = vec4(max(color, 0.0), 1.0); // linear HDR, un-tonemapped
+    }
+  `,
+
+  // ---- PASS 2: bright-pass extraction (feeds the bloom blur chain) ------
+  brightPass: /* glsl */`
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D u_tex;
+    uniform float u_threshold;
+    void main() {
+      vec3 c = texture2D(u_tex, vUv).rgb;
+      float lum = dot(c, vec3(0.2126,0.7152,0.0722));
+      float w = smoothstep(u_threshold, u_threshold + 0.35, lum);
+      gl_FragColor = vec4(c * w, 1.0);
+    }
+  `,
+
+  // ---- PASS 3: separable gaussian blur (used twice: H then V) -----------
+  blur: /* glsl */`
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D u_tex;
+    uniform vec2 u_direction; // (1,0) or (0,1) scaled by texel size
+    void main() {
+      vec2 texel = u_direction;
+      vec3 sum = texture2D(u_tex, vUv).rgb * 0.227027;
+      sum += texture2D(u_tex, vUv + texel * 1.384615).rgb * 0.316216;
+      sum += texture2D(u_tex, vUv - texel * 1.384615).rgb * 0.316216;
+      sum += texture2D(u_tex, vUv + texel * 3.230769).rgb * 0.070270;
+      sum += texture2D(u_tex, vUv - texel * 3.230769).rgb * 0.070270;
+      gl_FragColor = vec4(sum, 1.0);
+    }
+  `,
+
+  // ---- PASS 4: final composite (bloom blend, exposure, vignette, grain,
+  //              lens flare, ACES tonemap, gamma) -------------------------
+  composite: /* glsl */`
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D u_scene;
+    uniform sampler2D u_bloom;
+    uniform float u_bloomStrength;
+    uniform float u_exposure;
+    uniform float u_vignette;
+    uniform float u_grain;
+    uniform float u_lensFlare;
+    uniform bool  u_cameraEffects;
+    uniform float u_time;
+
+    vec3 ACES(vec3 x) {
+      float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+      return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+    }
+    float rand(vec2 co) { return fract(sin(dot(co, vec2(12.9898,78.233))) * 43758.5453); }
+
+    void main() {
+      vec3 base = texture2D(u_scene, vUv).rgb;
+      vec3 bloom = texture2D(u_bloom, vUv).rgb;
+      vec3 color = base + bloom * u_bloomStrength;
+
+      vec2 centerUV = vUv - 0.5;
+      if (u_cameraEffects && u_lensFlare > 0.0) {
+        float flare = exp(-abs(centerUV.y * 14.0)) * (color.r+color.g+color.b) * 0.15 * u_lensFlare;
+        color += vec3(flare*0.3, flare*0.65, flare*1.0);
+      }
+
+      color *= u_exposure;
+      float d = length(centerUV);
+      float vig = clamp(1.0 - d*d*u_vignette*2.0, 0.0, 1.0);
+      color *= vig;
+
+      color = ACES(color);
+      color = pow(color, vec3(1.0/2.2));
+
+      if (u_grain > 0.0) {
+        float g = (rand(vUv * u_resolution_grain_seed()) - 0.5) * u_grain;
+        color += g;
+      }
+
+      gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+    }
+  `
+};
+
+// The composite shader references a helper that needs the resolution; we
+// patch it in at build time to avoid an unused-uniform warning on GPUs
+// that dislike an uniform declared-but-unused when grain = 0.
+ShaderLibrary.composite = ShaderLibrary.composite.replace(
+  'u_resolution_grain_seed()',
+  '(gl_FragCoord.xy)'
+);
+
+/* ============================================================================
+ * MODULE: RenderPipeline
+ * ----------------------------------------------------------------------------
+ * Owns every WebGLRenderTarget and orchestrates the four-pass pipeline:
+ *   raymarch -> bright-pass -> blur(H) -> blur(V) -> composite(screen)
+ * Internally renders at `resolutionScale * viewport` for performance, then
+ * relies on the canvas being CSS-stretched to the full viewport.
+ * ==========================================================================*/
+class RenderPipeline {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.quadGeometry = new THREE.BufferGeometry();
+    this.quadGeometry.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([-1,-1,0, 3,-1,0, -1,3,0]), 3 // oversized triangle trick
+    ));
+
+    this.raymarchMaterial = new THREE.ShaderMaterial({
+      vertexShader: ShaderLibrary.vertex, fragmentShader: ShaderLibrary.raymarch,
+      depthTest: false, depthWrite: false,
+      uniforms: RenderPipeline.buildRaymarchUniforms()
+    });
+    this.brightMaterial = new THREE.ShaderMaterial({
+      vertexShader: ShaderLibrary.vertex, fragmentShader: ShaderLibrary.brightPass,
+      depthTest: false, depthWrite: false,
+      uniforms: { u_tex: { value: null }, u_threshold: { value: 0.55 } }
+    });
+    this.blurMaterial = new THREE.ShaderMaterial({
+      vertexShader: ShaderLibrary.vertex, fragmentShader: ShaderLibrary.blur,
+      depthTest: false, depthWrite: false,
+      uniforms: { u_tex: { value: null }, u_direction: { value: new THREE.Vector2(1,0) } }
+    });
+    this.compositeMaterial = new THREE.ShaderMaterial({
+      vertexShader: ShaderLibrary.vertex, fragmentShader: ShaderLibrary.composite,
+      depthTest: false, depthWrite: false,
+      uniforms: {
+        u_scene: { value: null }, u_bloom: { value: null },
+        u_bloomStrength: { value: 0.45 }, u_exposure: { value: 1.0 },
+        u_vignette: { value: 0.55 }, u_grain: { value: 0.0 },
+        u_lensFlare: { value: 0.25 }, u_cameraEffects: { value: true },
+        u_time: { value: 0.0 }
+      }
+    });
+
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.Camera(); // unused perspective, quad ignores it
+    this.mesh = new THREE.Mesh(this.quadGeometry, this.raymarchMaterial);
+    this.scene.add(this.mesh);
+
+    this.width = 2; this.height = 2;
+    this._buildTargets();
+  }
+
+  static buildRaymarchUniforms() {
+    return {
+      u_resolution: { value: new THREE.Vector2(2,2) },
+      u_cameraPos: { value: new THREE.Vector3() },
+      u_cameraDir: { value: new THREE.Vector3() },
+      u_cameraUp: { value: new THREE.Vector3() },
+      u_cameraRight: { value: new THREE.Vector3() },
+      u_time: { value: 0 },
+      u_rs: { value: 1.0 }, u_spin: { value: 0.65 }, u_charge: { value: 0.0 },
+      u_bhType: { value: 1 }, u_isTesseract: { value: false },
+      u_showPhotonSphere: { value: false }, u_hawkingRadiation: { value: 0 },
+      u_lensingStrength: { value: 1.0 },
+      u_diskDensity: { value: 1.1 }, u_diskViscosity: { value: 0.8 },
+      u_diskParticleDensity: { value: 0.7 }, u_diskEdgeSoftness: { value: 0.6 },
+      u_diskInnerMult: { value: 2.8 }, u_diskOuterMult: { value: 11.0 },
+      u_diskTemperature: { value: 7200 }, u_palette: { value: 0 },
+      u_showStars: { value: true }, u_starCount: { value: 400 },
+      u_starBrightness: { value: 0.8 }, u_starTwinkle: { value: true },
+      u_textureFiltering: { value: 0.6 }, u_maxSteps: { value: 90 },
+      u_samples: { value: 1 }, u_stepMultiplier: { value: 0.055 },
+      u_noiseReduction: { value: 1.0 }, u_audioIntensity: { value: 0 },
+      u_chromaticAberration: { value: 0.0015 }, u_cameraEffects: { value: true }
+    };
+  }
+
+  _rtOptions() {
+    // Prefer half-float render targets for HDR bloom headroom, but fall back
+    // to standard 8-bit targets on hardware/browsers that can't render to
+    // float textures — keeps the engine robust across GPUs.
+    const supportsFloat = this.renderer.capabilities.isWebGL2 || this.renderer.extensions.get('OES_texture_half_float');
+    const type = supportsFloat ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    return { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type, depthBuffer: false, stencilBuffer: false };
+  }
+
+  _buildTargets() {
+    this.sceneRT?.dispose(); this.brightRT?.dispose(); this.blurRT1?.dispose(); this.blurRT2?.dispose();
+    this.sceneRT = new THREE.WebGLRenderTarget(this.width, this.height, this._rtOptions());
+    const bw = Math.max(2, Math.floor(this.width * 0.5));
+    const bh = Math.max(2, Math.floor(this.height * 0.5));
+    this.brightRT = new THREE.WebGLRenderTarget(bw, bh, this._rtOptions());
+    this.blurRT1 = new THREE.WebGLRenderTarget(bw, bh, this._rtOptions());
+    this.blurRT2 = new THREE.WebGLRenderTarget(bw, bh, this._rtOptions());
+  }
+
+  setSize(width, height) {
+    this.width = Math.max(2, Math.floor(width));
+    this.height = Math.max(2, Math.floor(height));
+    this._buildTargets();
+    this.raymarchMaterial.uniforms.u_resolution.value.set(this.width, this.height);
+  }
+
+  _drawFullscreen(material, target) {
+    this.mesh.material = material;
+    this.renderer.setRenderTarget(target);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  render(bloomStrength) {
+    // Pass 1: raymarch the relativistic scene.
+    this._drawFullscreen(this.raymarchMaterial, this.sceneRT);
+
+    // Pass 2 + 3: bloom chain (skipped cheaply when strength ~ 0).
+    if (bloomStrength > 0.004) {
+      this.brightMaterial.uniforms.u_tex.value = this.sceneRT.texture;
+      this._drawFullscreen(this.brightMaterial, this.brightRT);
+
+      const texel1 = new THREE.Vector2(1 / this.brightRT.width, 0);
+      const texel2 = new THREE.Vector2(0, 1 / this.brightRT.height);
+
+      this.blurMaterial.uniforms.u_tex.value = this.brightRT.texture;
+      this.blurMaterial.uniforms.u_direction.value.copy(texel1);
+      this._drawFullscreen(this.blurMaterial, this.blurRT1);
+
+      this.blurMaterial.uniforms.u_tex.value = this.blurRT1.texture;
+      this.blurMaterial.uniforms.u_direction.value.copy(texel2);
+      this._drawFullscreen(this.blurMaterial, this.blurRT2);
+    }
+
+    // Pass 4: composite straight to the screen (null render target).
+    this.compositeMaterial.uniforms.u_scene.value = this.sceneRT.texture;
+    this.compositeMaterial.uniforms.u_bloom.value = bloomStrength > 0.004 ? this.blurRT2.texture : this.sceneRT.texture;
+    this.compositeMaterial.uniforms.u_bloomStrength.value = bloomStrength > 0.004 ? bloomStrength : 0.0;
+    this.mesh.material = this.compositeMaterial;
+    this.renderer.setRenderTarget(null);
+    this.renderer.render(this.scene, this.camera);
+  }
+}
+
+/* ============================================================================
+ * MODULE: OrbitCameraRig
+ * ----------------------------------------------------------------------------
+ * A dependency-free replacement for THREE.OrbitControls: spherical-coordinate
+ * orbit with inertia, driven by pointer + wheel events. Kept intentionally
+ * small so the whole engine has zero addon dependencies.
+ * ==========================================================================*/
+class OrbitCameraRig {
+  constructor(camera, domElement) {
+    this.camera = camera;
+    this.dom = domElement;
+    this.radius = 18;
+    this.minRadius = 2.2; this.maxRadius = 50;
+    this.theta = 0.35;      // azimuth
+    this.phi = 1.35;        // polar (from +Y)
+    this.targetTheta = this.theta;
+    this.targetPhi = this.phi;
+    this.targetRadius = this.radius;
+    this.dragging = false;
+    this.lastX = 0; this.lastY = 0;
+    this.enabled = true;
+
+    this.dom.addEventListener('pointerdown', (e) => {
+      if (!this.enabled) return;
+      this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY;
+      this.dom.setPointerCapture(e.pointerId);
+    });
+    this.dom.addEventListener('pointermove', (e) => {
+      if (!this.enabled || !this.dragging) return;
+      const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
+      this.lastX = e.clientX; this.lastY = e.clientY;
+      this.targetTheta -= dx * 0.0045;
+      this.targetPhi = Math.min(Math.max(this.targetPhi - dy * 0.0045, 0.15), Math.PI - 0.15);
+    });
+    window.addEventListener('pointerup', () => { this.dragging = false; });
+    this.dom.addEventListener('wheel', (e) => {
+      if (!this.enabled) return;
+      e.preventDefault();
+      this.targetRadius = Math.min(Math.max(this.targetRadius + e.deltaY * 0.01, this.minRadius), this.maxRadius);
+    }, { passive: false });
+  }
+
+  update(autoRotateSpeed) {
+    if (!this.dragging && autoRotateSpeed) this.targetTheta += autoRotateSpeed * 0.016;
+
+    this.theta += (this.targetTheta - this.theta) * 0.12;
+    this.phi += (this.targetPhi - this.phi) * 0.12;
+    this.radius += (this.targetRadius - this.radius) * 0.12;
+
+    const sinPhi = Math.sin(this.phi);
+    this.camera.position.set(
+      this.radius * sinPhi * Math.sin(this.theta),
+      this.radius * Math.cos(this.phi),
+      this.radius * sinPhi * Math.cos(this.theta)
+    );
+    this.camera.lookAt(0, 0, 0);
+  }
+}
+
+/* ============================================================================
+ * MODULE: CinematicDirector
+ * ----------------------------------------------------------------------------
+ * Scripted, audio-reactive camera paths used when Cinematic Mode is active.
+ * Each mode is a small pure function of elapsed time -> camera transform,
+ * kept separate from OrbitCameraRig so manual and scripted control never
+ * fight each other.
+ * ==========================================================================*/
+class CinematicDirector {
+  constructor(camera) {
+    this.camera = camera;
+    this.angle = 0;
+  }
+
+  update(dt, elapsed, state, audioIntensity) {
+    const speedScale = (0.22 + (state.get('musicReactivity') ? audioIntensity * 0.8 : 0)) * state.get('transitionSpeed');
+    this.angle += speedScale * dt;
+
+    let sx = 0, sy = 0, sz = 0;
+    const mode = state.get('cinematicCamMode');
+
+    if (mode === 'Handheld Shake') {
+      const blur = 0.5;
+      sx = Math.sin(elapsed*12)*Math.cos(elapsed*7)*0.35*(0.8+blur);
+      sy = Math.cos(elapsed*10)*Math.sin(elapsed*8)*0.35*(0.8+blur);
+      sz = Math.sin(elapsed*9)*0.25*(0.8+blur);
+    }
+
+    if (mode === 'Slow Dolly') {
+      const dist = 14.0 + Math.sin(elapsed*0.4)*5.0;
+      this.camera.position.set(sx, 1.5+sy, dist+sz);
+      this.camera.lookAt(0,0,0);
+    } else if (mode === 'Photon Skim') {
+      // Fast, tight orbit hugging the photon sphere for a dramatic pass.
+      const r = 3.4 + Math.sin(this.angle*0.6)*0.6;
+      const theta = this.angle * 2.1;
+      this.camera.position.set(Math.sin(theta)*r, 0.6*Math.sin(this.angle*0.4), Math.cos(theta)*r);
+      this.camera.lookAt(0,0,0);
+    } else { // Front Orbit
+      const complexity = state.get('pathComplexity');
+      const radius = 15.0 + Math.sin(this.angle*0.2*complexity)*2.5;
+      const theta = this.angle * complexity;
+      const phi = Math.sin(this.angle*0.3)*0.2;
+      this.camera.position.x = Math.sin(theta)*Math.cos(phi)*radius + sx;
+      this.camera.position.z = Math.cos(theta)*Math.cos(phi)*radius + sz;
+      this.camera.position.y = Math.sin(phi)*radius + 1.2 + sy;
+      this.camera.lookAt(0,0,0);
+    }
+
+    const breathe = Math.sin(elapsed*3.5) * 1.2 * state.get('focalDepth');
+    const target = 60.0 - (state.get('musicReactivity') ? audioIntensity*8 : 4) + breathe;
+    this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, target, 0.12);
+    this.camera.updateProjectionMatrix();
+  }
+}
+
+/* ============================================================================
+ * MODULE: AudioEngine
+ * ----------------------------------------------------------------------------
+ * Thin Web Audio wrapper providing a smoothed bass-intensity signal used by
+ * music-reactive uniforms and the cinematic director. Gracefully degrades if
+ * AudioContext creation fails (e.g. autoplay policies).
+ * ==========================================================================*/
+class AudioEngine {
+  constructor(audioElement) {
+    this.el = audioElement;
+    this.ctx = null; this.analyser = null; this.gain = null; this.data = null;
+    this.intensity = 0;
+  }
+
+  init() {
+    if (this.ctx) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 512;
+      const source = this.ctx.createMediaElementSource(this.el);
+      this.gain = this.ctx.createGain();
+      this.gain.gain.value = 0.0001;
+      source.connect(this.gain);
+      this.gain.connect(this.analyser);
+      this.analyser.connect(this.ctx.destination);
+      this.data = new Uint8Array(this.analyser.frequencyBinCount);
+    } catch (e) { console.warn('[AudioEngine] init failed', e); }
+  }
+
+  fadeTo(target, ms = 1200) {
+    if (!this.gain || !this.ctx) { this.el.volume = target; return; }
+    const now = this.ctx.currentTime;
+    this.gain.gain.cancelScheduledValues(now);
+    this.gain.gain.setValueAtTime(this.gain.gain.value, now);
+    this.gain.gain.linearRampToValueAtTime(Math.max(target, 0.0001), now + ms/1000);
+  }
+
+  update() {
+    if (!this.analyser || this.el.paused) { this.intensity = 0; return; }
+    this.analyser.getByteFrequencyData(this.data);
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += this.data[i];
+    this.intensity = (sum / 12) / 255;
+  }
+}
+
+/* ============================================================================
+ * MODULE: RecordingStudio
+ * ----------------------------------------------------------------------------
+ * MediaRecorder-based capture that forces the pipeline to a true 1920x1080
+ * buffer for the duration of the recording, then restores the previous
+ * resolution scale automatically.
+ * ==========================================================================*/
+class RecordingStudio {
+  constructor(canvas, pipeline, onRestore) {
+    this.canvas = canvas;
+    this.pipeline = pipeline;
+    this.onRestore = onRestore;
+    this.recorder = null;
+    this.chunks = [];
+    this.savedSize = null;
+  }
+
+  start() {
+    this.chunks = [];
+    this.savedSize = { w: this.pipeline.width, h: this.pipeline.height };
+    this.pipeline.setSize(1920, 1080);
+
+    const stream = this.canvas.captureStream(60);
+    const opts = { videoBitsPerSecond: 15_000_000 };
+    try {
+      this.recorder = new MediaRecorder(stream, { ...opts, mimeType: 'video/webm;codecs=vp9' });
+    } catch (e) {
+      try { this.recorder = new MediaRecorder(stream, { ...opts, mimeType: 'video/webm' }); }
+      catch (err) { alert('MediaRecorder capture is not supported in this browser.'); return false; }
+    }
+    this.recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) this.chunks.push(ev.data); };
+    this.recorder.onstop = () => {
+      const blob = new Blob(this.chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none'; a.href = url; a.download = 'singularity_1080p.webm';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+      if (this.savedSize) this.onRestore(this.savedSize);
+    };
+    this.recorder.start();
+    return true;
+  }
+
+  stop() {
+    if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
+  }
+}
+
+/* ============================================================================
+ * MODULE: ControlDeck
+ * ----------------------------------------------------------------------------
+ * A tiny, dependency-free, schema-driven control panel. Each section is an
+ * array of widget descriptors; the deck renders the right DOM for each type
+ * and wires it straight to the StateStore, so adding a new control never
+ * requires touching CSS or event-plumbing by hand.
+ * ==========================================================================*/
+class ControlDeck {
+  constructor(root, state, actions) {
+    this.root = root;
+    this.state = state;
+    this.actions = actions; // { onQualityPreset, onMassClass, onSave, onLoad, onReset, onRecordToggle, onCinematicToggle, onRemoveStars, onRestoreStars }
+    this.widgetRefs = {};   // key -> DOM element(s), for external sync (e.g. FPS)
+    this._build();
+  }
+
+  _build() {
+    const header = document.createElement('div');
+    header.className = 'deck-header';
+    header.innerHTML = `
+      <h1>SINGULARITY // Relativistic Engine</h1>
+      <p>Drag to orbit &middot; scroll to zoom &middot; every control below drives the raymarch shader in real time.</p>
+    `;
+    this.root.appendChild(header);
+
+    const sections = this._schema();
+    sections.forEach((section, idx) => this._buildSection(section, idx + 1));
+  }
+
+  _schema() {
+    const S = this.state;
+    return [
+      {
+        title: 'Simulation Presets', open: true, widgets: [
+          { type: 'select', key: 'qualityPreset', label: 'Quality Preset', options: Object.keys(QUALITY_PRESETS), onChange: (v) => this.actions.onQualityPreset(v) },
+          { type: 'slider', key: 'resolutionScale', label: 'Render Scale', min: 0.3, max: 1.0, step: 0.05, format: (v) => `${Math.round(v*100)}%` },
+          { type: 'hint', text: 'Boots at the lowest fidelity preset by design. Raise the preset for sharper lensing and disk detail.' }
+        ]
+      },
+      {
+        title: 'Black Hole Physics', widgets: [
+          { type: 'select', key: 'bhType', label: 'Metric', options: Object.keys(BH_TYPE_CODE) },
+          { type: 'select', key: 'massClass', label: 'Mass Class', options: Object.keys(MASS_CLASS_PRESETS), onChange: (v) => this.actions.onMassClass(v) },
+          { type: 'slider', key: 'spin', label: 'Kerr Spin (a)', min: 0, max: 0.99, step: 0.01 },
+          { type: 'slider', key: 'charge', label: 'Charge (Q)', min: 0, max: 0.95, step: 0.01 },
+          { type: 'slider', key: 'lensingStrength', label: 'Lensing Intensity', min: 0, max: 2.5, step: 0.05 },
+          { type: 'toggle', key: 'showPhotonSphere', label: 'Photon Sphere Marker' },
+          { type: 'slider', key: 'hawkingRadiation', label: 'Hawking Glow', min: 0, max: 1, step: 0.02 },
+          { type: 'toggle', key: 'isTesseract', label: 'Tesseract Fold-Space' }
+        ]
+      },
+      {
+        title: 'Accretion Disk', widgets: [
+          { type: 'slider', key: 'diskDensity', label: 'Density', min: 0, max: 3, step: 0.05 },
+          { type: 'slider', key: 'diskViscosity', label: 'Viscosity / Swirl', min: 0.1, max: 2, step: 0.05 },
+          { type: 'slider', key: 'diskParticleDensity', label: 'Particle Detail', min: 0.2, max: 3, step: 0.05 },
+          { type: 'slider', key: 'diskEdgeSoftness', label: 'Edge Softness', min: 0.1, max: 2, step: 0.05 },
+          { type: 'slider', key: 'diskInnerMult', label: 'Inner Radius', min: 1.5, max: 5, step: 0.1 },
+          { type: 'slider', key: 'diskOuterMult', label: 'Outer Radius', min: 6, max: 20, step: 0.5 },
+          { type: 'slider', key: 'diskTemperature', label: 'Base Temperature (K)', min: 3000, max: 14000, step: 100 },
+          { type: 'palette', key: 'colorPalette', label: 'Color Palette', options: Object.keys(PALETTE_CODE) }
+        ]
+      },
+      {
+        title: 'Starfield', widgets: [
+          { type: 'toggle', key: 'showStars', label: 'Show Stars' },
+          { type: 'slider', key: 'starCount', label: 'Star Density', min: 0, max: 5000, step: 10 },
+          { type: 'slider', key: 'starBrightness', label: 'Brightness', min: 0, max: 2, step: 0.05 },
+          { type: 'toggle', key: 'starTwinkle', label: 'Twinkle' },
+          { type: 'buttons', buttons: [
+            { label: 'Remove All Stars', className: 'danger', onClick: () => this.actions.onRemoveStars() },
+            { label: 'Restore Stars', className: '', onClick: () => this.actions.onRestoreStars() }
+          ]}
+        ]
+      },
+      {
+        title: 'Post Processing', widgets: [
+          { type: 'slider', key: 'bloomStrength', label: 'Bloom Intensity', min: 0, max: 3, step: 0.05 },
+          { type: 'slider', key: 'bloomThreshold', label: 'Bloom Threshold', min: 0, max: 1.5, step: 0.02 },
+          { type: 'slider', key: 'chromaticAberration', label: 'Chromatic Aberration', min: 0, max: 0.02, step: 0.0005 },
+          { type: 'slider', key: 'lensFlare', label: 'Lens Flare', min: 0, max: 2, step: 0.05 },
+          { type: 'slider', key: 'exposure', label: 'Exposure', min: 0.3, max: 2.5, step: 0.05 },
+          { type: 'slider', key: 'vignetteEffect', label: 'Vignette', min: 0, max: 1.5, step: 0.05 },
+          { type: 'slider', key: 'filmGrainAmount', label: 'Film Grain', min: 0, max: 0.25, step: 0.01 }
+        ]
+      },
+      {
+        title: 'Camera & Cinematic', widgets: [
+          { type: 'toggle', key: 'autoRotate', label: 'Auto-Rotate (Manual Cam)' },
+          { type: 'slider', key: 'autoRotateSpeed', label: 'Rotate Speed', min: 0, max: 0.4, step: 0.01 },
+          { type: 'toggle', key: 'cinematicMode', label: 'Cinematic Mode', onChange: (v) => this.actions.onCinematicToggle(v) },
+          { type: 'select', key: 'cinematicCamMode', label: 'Camera Path', options: ['Front Orbit', 'Handheld Shake', 'Slow Dolly', 'Photon Skim'] },
+          { type: 'slider', key: 'pathComplexity', label: 'Path Complexity', min: 0.5, max: 3, step: 0.05 },
+          { type: 'slider', key: 'transitionSpeed', label: 'Transition Speed', min: 0.2, max: 2.5, step: 0.05 },
+          { type: 'slider', key: 'focalDepth', label: 'Focal Breathing', min: 0.5, max: 2, step: 0.05 }
+        ]
+      },
+      {
+        title: 'Audio', widgets: [
+          { type: 'slider', key: 'masterVolume', label: 'Master Volume', min: 0, max: 1, step: 0.02 },
+          { type: 'toggle', key: 'musicReactivity', label: 'Music Reactivity' }
+        ]
+      },
+      {
+        title: 'Capture & Session', widgets: [
+          { type: 'record-button', key: 'recordCinematic', label: '● Record 1080p60' },
+          { type: 'buttons', buttons: [
+            { label: 'Save Config', className: 'primary', onClick: () => this.actions.onSave() },
+            { label: 'Load Config', className: '', onClick: () => this.actions.onLoad() }
+          ]},
+          { type: 'buttons', buttons: [
+            { label: 'Reset to Defaults', className: 'danger', onClick: () => this.actions.onReset() }
+          ]}
+        ]
+      }
+    ];
+  }
+
+  _buildSection(section, index) {
+    const wrap = document.createElement('div');
+    wrap.className = 'deck-section' + (section.open ? ' open' : '');
+
+    const head = document.createElement('div');
+    head.className = 'deck-section-header';
+    head.innerHTML = `<span class="deck-eyebrow" data-index="${String(index).padStart(2,'0')}">${section.title}</span><span class="chevron">&#9656;</span>`;
+    head.addEventListener('click', () => wrap.classList.toggle('open'));
+
+    const body = document.createElement('div');
+    body.className = 'deck-body';
+    section.widgets.forEach((w) => body.appendChild(this._buildWidget(w)));
+
+    wrap.appendChild(head); wrap.appendChild(body);
+    this.root.appendChild(wrap);
+  }
+
+  _buildWidget(w) {
+    switch (w.type) {
+      case 'slider': return this._slider(w);
+      case 'toggle': return this._toggle(w);
+      case 'select': return this._select(w);
+      case 'palette': return this._palette(w);
+      case 'buttons': return this._buttons(w);
+      case 'record-button': return this._recordButton(w);
+      case 'hint': { const p = document.createElement('p'); p.className = 'hint'; p.textContent = w.text; return p; }
+      default: return document.createElement('div');
+    }
+  }
+
+  _slider(w) {
+    const row = document.createElement('div'); row.className = 'control-row';
+    const label = document.createElement('div'); label.className = 'control-label';
+    const valSpan = document.createElement('span'); valSpan.className = 'val';
+    label.innerHTML = `<span>${w.label}</span>`; label.appendChild(valSpan);
+
+    const input = document.createElement('input');
+    input.type = 'range'; input.min = w.min; input.max = w.max; input.step = w.step;
+    input.value = this.state.get(w.key);
+
+    const fmt = w.format || ((v) => (Number.isInteger(w.step) ? Math.round(v) : Number(v).toFixed(2)));
+    valSpan.textContent = fmt(parseFloat(input.value));
+
+    input.addEventListener('input', () => {
+      const v = parseFloat(input.value);
+      valSpan.textContent = fmt(v);
+      this.state.set(w.key, v);
+      if (w.onChange) w.onChange(v);
+    });
+
+    row.appendChild(label); row.appendChild(input);
+    this.widgetRefs[w.key] = input;
+    return row;
+  }
+
+  _toggle(w) {
+    const row = document.createElement('div'); row.className = 'toggle-row';
+    const label = document.createElement('div'); label.className = 'control-label';
+    label.innerHTML = `<span>${w.label}</span>`;
+
+    const switchLabel = document.createElement('label'); switchLabel.className = 'switch';
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = !!this.state.get(w.key);
+    const track = document.createElement('span'); track.className = 'track';
+    const knob = document.createElement('span'); knob.className = 'knob';
+    track.appendChild(knob); switchLabel.appendChild(input); switchLabel.appendChild(track);
+
+    input.addEventListener('change', () => {
+      this.state.set(w.key, input.checked);
+      if (w.onChange) w.onChange(input.checked);
+    });
+
+    row.appendChild(label); row.appendChild(switchLabel);
+    this.widgetRefs[w.key] = input;
+    return row;
+  }
+
+  _select(w) {
+    const row = document.createElement('div'); row.className = 'control-row';
+    const label = document.createElement('div'); label.className = 'control-label';
+    label.innerHTML = `<span>${w.label}</span>`;
+
+    const select = document.createElement('select'); select.className = 'control-select';
+    w.options.forEach((opt) => {
+      const o = document.createElement('option'); o.value = opt; o.textContent = opt;
+      if (opt === this.state.get(w.key)) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', () => {
+      this.state.set(w.key, select.value);
+      if (w.onChange) w.onChange(select.value);
+    });
+
+    row.appendChild(label); row.appendChild(select);
+    this.widgetRefs[w.key] = select;
+    return row;
+  }
+
+  _palette(w) {
+    const row = document.createElement('div'); row.className = 'control-row';
+    const label = document.createElement('div'); label.className = 'control-label';
+    label.innerHTML = `<span>${w.label}</span>`;
+    row.appendChild(label);
+
+    const swatchColors = {
+      Classic: 'linear-gradient(135deg,#ffb56b,#fff3d6)',
+      Infrared: 'linear-gradient(135deg,#3a0000,#ff5522)',
+      Ultraviolet: 'linear-gradient(135deg,#1a0033,#8855ff)',
+      Monochrome: 'linear-gradient(135deg,#333,#ddd)',
+      Exotic: 'linear-gradient(135deg,#0ee0c8,#ff2ea6)'
+    };
+
+    const swatchRow = document.createElement('div'); swatchRow.className = 'swatch-row';
+    w.options.forEach((opt) => {
+      const sw = document.createElement('div');
+      sw.className = 'swatch' + (opt === this.state.get(w.key) ? ' active' : '');
+      sw.style.background = swatchColors[opt] || '#333';
+      sw.title = opt;
+      sw.addEventListener('click', () => {
+        this.state.set(w.key, opt);
+        [...swatchRow.children].forEach((c) => c.classList.remove('active'));
+        sw.classList.add('active');
+      });
+      swatchRow.appendChild(sw);
+    });
+    row.appendChild(swatchRow);
+    return row;
+  }
+
+  _buttons(w) {
+    const row = document.createElement('div'); row.className = 'btn-row';
+    w.buttons.forEach((b) => {
+      const btn = document.createElement('div');
+      btn.className = 'btn' + (b.className ? ` ${b.className}` : '');
+      btn.textContent = b.label;
+      btn.addEventListener('click', b.onClick);
+      row.appendChild(btn);
+    });
+    return row;
+  }
+
+  _recordButton(w) {
+    const row = document.createElement('div'); row.className = 'btn-row';
+    const btn = document.createElement('div');
+    btn.className = 'btn record';
+    btn.textContent = w.label;
+    btn.addEventListener('click', () => {
+      const next = !this.state.get('recordCinematic');
+      this.state.set('recordCinematic', next);
+      btn.classList.toggle('recording', next);
+      this.actions.onRecordToggle(next);
+    });
+    row.appendChild(btn);
+    this.widgetRefs.recordCinematic = btn;
+    return row;
+  }
+
+  syncFromState() {
+    // Refresh every widget's displayed value from the current StateStore —
+    // used after Load Config / Reset to Defaults so the UI never drifts
+    // from the numbers actually driving the shader.
+    for (const [key, el] of Object.entries(this.widgetRefs)) {
+      if (key === 'recordCinematic') continue;
+      const v = this.state.get(key);
+      if (v === undefined) continue;
+      if (el.type === 'checkbox') el.checked = !!v;
+      else if (el.tagName === 'SELECT') el.value = v;
+      else if (el.type === 'range') {
+        el.value = v;
+        const row = el.closest('.control-row');
+        const valSpan = row && row.querySelector('.val');
+        if (valSpan) valSpan.textContent = (Number.isInteger(v) ? v : Number(v).toFixed(2));
+      }
+    }
+  }
+}
+
+/* ============================================================================
+ * MODULE: Application
+ * ----------------------------------------------------------------------------
+ * Wires StateStore <-> RenderPipeline <-> ControlDeck <-> Camera rigs and
+ * owns the requestAnimationFrame loop.
+ * ==========================================================================*/
+class Application {
+  constructor() {
+    this.state = new StateStore();
+    this.clock = new THREE.Clock();
+    this.frameCount = 0; this.lastFpsSample = 0;
+
+    this._initRenderer();
+    this._initCameras();
+    this._initPipeline();
+    this._initAudio();
+    this._initRecording();
+    this._initControlDeck();
+    this._initHUD();
+    this._initChrome();
+    this._applyQualityPreset(this.state.get('qualityPreset'), /*silent*/ true);
+    this._bindResize();
+    this._syncAllUniforms();
+
+    this.director = new CinematicDirector(this.camera);
+    requestAnimationFrame(() => this._tick());
+  }
+
+  _initRenderer() {
+    const container = document.getElementById('canvas-container');
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+    this.renderer.setPixelRatio(1); // internal buffer resolution is controlled manually for perf
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    container.appendChild(this.renderer.domElement);
+    this.canvas = this.renderer.domElement;
+  }
+
+  _initCameras() {
+    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    this.camera.position.set(0, 2.5, 18);
+    this.orbitRig = new OrbitCameraRig(this.camera, this.canvas);
+  }
+
+  _initPipeline() {
+    this.pipeline = new RenderPipeline(this.renderer);
+    this._resizePipeline();
+  }
+
+  _initAudio() {
+    this.audioEl = document.getElementById('audio-track');
+    this.audio = new AudioEngine(this.audioEl);
+  }
+
+  _initRecording() {
+    this.recording = new RecordingStudio(this.canvas, this.pipeline, (savedSize) => {
+      this.pipeline.setSize(savedSize.w, savedSize.h);
+      this.state.set('recordCinematic', false);
+      this.deck.widgetRefs.recordCinematic.classList.remove('recording');
+      document.getElementById('stop-recording-banner').style.display = 'none';
+    });
+  }
+
+  _initControlDeck() {
+    const root = document.getElementById('control-deck');
+    this.deck = new ControlDeck(root, this.state, {
+      onQualityPreset: (name) => this._applyQualityPreset(name),
+      onMassClass: (name) => this._applyMassClass(name),
+      onSave: () => { const ok = this.state.save(); this._flashHud(ok ? 'Configuration saved.' : 'Save failed.'); },
+      onLoad: () => { const ok = this.state.load(); this.deck.syncFromState(); this._flashHud(ok ? 'Configuration loaded.' : 'No saved configuration found.'); },
+      onReset: () => { this.state.reset(); this.deck.syncFromState(); this._flashHud('Reset to defaults.'); },
+      onRecordToggle: (on) => this._toggleRecording(on),
+      onCinematicToggle: (on) => this._toggleCinematic(on),
+      onRemoveStars: () => { this.state.set('showStars', false); this.state.set('starCount', 0); this.deck.syncFromState(); },
+      onRestoreStars: () => { this.state.set('showStars', true); this.state.set('starCount', 400); this.deck.syncFromState(); }
+    });
+  }
+
+  _initHUD() {
+    this.hudFps = document.getElementById('hud-fps');
+    this.hudMetric = document.getElementById('hud-metric');
+    this.hudHorizon = document.getElementById('hud-horizon');
+    this.hudSpin = document.getElementById('hud-spin');
+    this.hudScale = document.getElementById('hud-scale');
+    this.hudStars = document.getElementById('hud-stars');
+  }
+
+  _initChrome() {
+    const toggleBtn = document.getElementById('toggle-btn');
+    const deckEl = document.getElementById('control-deck');
+    let deckVisible = true;
+    toggleBtn.addEventListener('click', () => {
+      deckVisible = !deckVisible;
+      deckEl.classList.toggle('collapsed');
+      toggleBtn.classList.toggle('collapsed');
+      toggleBtn.textContent = deckVisible ? 'Hide Deck' : 'Show Deck';
+    });
+
+    document.getElementById('stop-recording-banner').addEventListener('click', () => {
+      this.state.set('recordCinematic', false);
+      this.deck.widgetRefs.recordCinematic.classList.remove('recording');
+      this._toggleRecording(false);
+    });
+  }
+
+  _flashHud(message) {
+    // Lightweight, non-blocking confirmation using the HUD title line.
+    const original = document.querySelector('#hud .title').textContent;
+    document.querySelector('#hud .title').textContent = message;
+    clearTimeout(this._hudFlashTimer);
+    this._hudFlashTimer = setTimeout(() => { document.querySelector('#hud .title').textContent = original; }, 1800);
+  }
+
+  _applyQualityPreset(name, silent) {
+    const preset = QUALITY_PRESETS[name] || QUALITY_PRESETS.Low;
+    Object.entries(preset).forEach(([k, v]) => this.state.set(k, v));
+    this.state.set('qualityPreset', name);
+    if (!silent) this.deck.syncFromState();
+    this._resizePipeline();
+  }
+
+  _applyMassClass(name) {
+    const preset = MASS_CLASS_PRESETS[name] || MASS_CLASS_PRESETS['Intermediate-Mass'];
+    Object.entries(preset).forEach(([k, v]) => this.state.set(k, v));
+    this.deck.syncFromState();
+  }
+
+  _toggleRecording(on) {
+    const banner = document.getElementById('stop-recording-banner');
+    if (on) {
+      if (!this.state.get('cinematicMode')) { this.state.set('cinematicMode', true); this.deck.syncFromState(); this._toggleCinematic(true); }
+      const started = this.recording.start();
+      banner.style.display = started ? 'block' : 'none';
+    } else {
+      this.recording.stop();
+      banner.style.display = 'none';
+    }
+  }
+
+  _toggleCinematic(on) {
+    this.audio.init();
+    if (on) {
+      this.orbitRig.enabled = false;
+      this.clock.start();
+      this.audioEl.play().catch(() => {});
+      this.audio.fadeTo(this.state.get('masterVolume'), 1500);
+      document.body.classList.add('cinematic');
+    } else {
+      this.orbitRig.enabled = true;
+      this.audio.fadeTo(0, 900);
+      setTimeout(() => this.audioEl.pause(), 900);
+      document.body.classList.remove('cinematic');
+      if (this.state.get('recordCinematic')) { this.state.set('recordCinematic', false); this._toggleRecording(false); }
+    }
+  }
+
+  _resizePipeline() {
+    const scale = this.state.get('resolutionScale');
+    this.pipeline.setSize(window.innerWidth * scale, window.innerHeight * scale);
+  }
+
+  _bindResize() {
+    window.addEventListener('resize', () => {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+      if (!this.state.get('recordCinematic')) this._resizePipeline();
+    });
+  }
+
+  _syncAllUniforms() {
+    // Called once at boot; per-frame sync happens incrementally in _tick
+    // for the handful of uniforms that actually change every frame, and
+    // here for the (much larger) set that only changes on user input —
+    // simplest correct approach given StateStore already fan-outs changes.
+    this.state.onChange(() => this._pushUniformsFromState());
+    this._pushUniformsFromState();
+  }
+
+  _pushUniformsFromState() {
+    const s = this.state.data;
+    const u = this.pipeline.raymarchMaterial.uniforms;
+
+    u.u_rs.value = s.rs;
+    u.u_spin.value = s.spin;
+    u.u_charge.value = s.charge;
+    u.u_bhType.value = BH_TYPE_CODE[s.bhType] ?? 1;
+    u.u_isTesseract.value = s.isTesseract;
+    u.u_showPhotonSphere.value = s.showPhotonSphere;
+    u.u_hawkingRadiation.value = s.hawkingRadiation;
+    u.u_lensingStrength.value = s.lensingStrength;
+
+    u.u_diskDensity.value = s.diskDensity;
+    u.u_diskViscosity.value = s.diskViscosity;
+    u.u_diskParticleDensity.value = s.diskParticleDensity;
+    u.u_diskEdgeSoftness.value = s.diskEdgeSoftness;
+    u.u_diskInnerMult.value = s.diskInnerMult;
+    u.u_diskOuterMult.value = s.diskOuterMult;
+    u.u_diskTemperature.value = s.diskTemperature;
+    u.u_palette.value = PALETTE_CODE[s.colorPalette] ?? 0;
+
+    u.u_showStars.value = s.showStars;
+    u.u_starCount.value = s.starCount;
+    u.u_starBrightness.value = s.starBrightness;
+    u.u_starTwinkle.value = s.starTwinkle;
+
+    u.u_textureFiltering.value = s.textureFiltering;
+    u.u_maxSteps.value = Math.round(s.maxSteps);
+    u.u_samples.value = Math.round(s.samples);
+    u.u_stepMultiplier.value = s.stepMultiplier;
+    u.u_noiseReduction.value = s.noiseReduction;
+    u.u_chromaticAberration.value = s.chromaticAberration;
+
+    const c = this.pipeline.compositeMaterial.uniforms;
+    c.u_exposure.value = s.exposure;
+    c.u_vignette.value = s.vignetteEffect;
+    c.u_grain.value = s.filmGrainAmount;
+    c.u_lensFlare.value = s.lensFlare;
+
+    this.pipeline.brightMaterial.uniforms.u_threshold.value = s.bloomThreshold;
+
+    document.getElementById('film-grain').style.opacity = s.filmGrainAmount > 0 ? Math.min(0.4, s.filmGrainAmount * 4) : 0;
+    this.audioEl.volume = s.masterVolume;
+    if (this.audio.gain) this.audio.gain.gain.value = s.masterVolume;
+  }
+
+  _updateHud(elapsedTime) {
+    this.frameCount++;
+    if (elapsedTime - this.lastFpsSample > 0.3) {
+      this.state.set('fps', Math.round(this.frameCount / (elapsedTime - this.lastFpsSample)));
+      this.frameCount = 0; this.lastFpsSample = elapsedTime;
+    }
+    const s = this.state.data;
+    const M = s.rs * 0.5;
+    let horizon;
+    if (s.bhType === 'Schwarzschild') horizon = s.rs;
+    else if (s.bhType === 'Kerr') { const a = Math.min(s.spin, 0.999*M); horizon = M + Math.sqrt(Math.max(0, M*M - a*a)); }
+    else if (s.bhType === 'Reissner-Nordstrom') { const Q = Math.min(s.charge, M); horizon = M + Math.sqrt(Math.max(0, M*M - Q*Q)); }
+    else { const a = Math.min(s.spin, 0.999*M), Q = Math.min(s.charge, M); horizon = M + Math.sqrt(Math.max(0, M*M - a*a - Q*Q)); }
+
+    this.hudFps.textContent = s.fps;
+    this.hudMetric.textContent = s.bhType;
+    this.hudHorizon.textContent = horizon.toFixed(3);
+    this.hudSpin.textContent = s.spin.toFixed(2);
+    this.hudScale.textContent = `${Math.round(s.resolutionScale*100)}%`;
+    this.hudStars.textContent = s.showStars ? `ON (${Math.round(s.starCount)})` : 'OFF';
+  }
+
+  _tick() {
+    requestAnimationFrame(() => this._tick());
+
+    const dt = this.clock.getDelta();
+    const t = this.clock.getElapsedTime();
+
+    this.audio.update();
+
+    if (this.state.get('cinematicMode')) {
+      this.director.update(dt, t, this.state, this.audio.intensity);
+    } else {
+      this.orbitRig.update(this.state.get('autoRotate') ? this.state.get('autoRotateSpeed') : 0);
+      this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, 60, 0.08);
+      this.camera.updateProjectionMatrix();
+    }
+
+    this.camera.updateMatrixWorld();
+    const camDir = new THREE.Vector3(); this.camera.getWorldDirection(camDir);
+    const camUp = new THREE.Vector3().copy(this.camera.up).applyMatrix4(new THREE.Matrix4().extractRotation(this.camera.matrixWorld)).normalize();
+    const camRight = new THREE.Vector3().crossVectors(camDir, camUp).normalize();
+
+    const u = this.pipeline.raymarchMaterial.uniforms;
+    u.u_cameraPos.value.copy(this.camera.position);
+    u.u_cameraDir.value.copy(camDir);
+    u.u_cameraUp.value.copy(camUp);
+    u.u_cameraRight.value.copy(camRight);
+    u.u_time.value = t;
+    u.u_audioIntensity.value = this.state.get('musicReactivity') ? this.audio.intensity : 0;
+    u.u_cameraEffects.value = true;
+
+    this.pipeline.compositeMaterial.uniforms.u_time.value = t;
+    this.pipeline.compositeMaterial.uniforms.u_cameraEffects.value = true;
+
+    this.pipeline.render(this.state.get('bloomStrength'));
+
+    this._updateHud(t);
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => { window.__singularityApp = new Application(); });
+</script>
 </body>
 </html>
