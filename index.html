@@ -312,7 +312,7 @@ class StateStore {
   static defaults() {
     return {
       // ---- Relativistic physics -----------------------------------------
-      bhType: 'Kerr',              // Schwarzschild | Kerr | Reissner-Nordstrom | Kerr-Newman
+      bhType: 'Schwarzschild',              // Schwarzschild | Kerr | Reissner-Nordstrom | Kerr-Newman
       rs: 1.0,                     // Schwarzschild radius scale (mass proxy)
       spin: 0.65,                  // Kerr spin parameter a (0..0.99)
       charge: 0.0,                 // Reissner-Nordstrom charge Q (0..0.95)
@@ -1694,7 +1694,7 @@ class Application {
     u.u_rs.value = s.rs;
     u.u_spin.value = s.spin;
     u.u_charge.value = s.charge;
-    u.u_bhType.value = BH_TYPE_CODE[s.bhType] ?? 1;
+    u.u_bhType.value = BH_TYPE_CODE[s.bhType] ?? 0;
     u.u_isTesseract.value = s.isTesseract;
     u.u_showPhotonSphere.value = s.showPhotonSphere;
     u.u_hawkingRadiation.value = s.hawkingRadiation;
